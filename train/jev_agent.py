@@ -649,7 +649,7 @@ def write_status(lines: list[str], path: str = STATUS_FILE) -> None:
 
 
 # エピソードの時間上限（tic）。full_map の episode_timeout と同じ
-EPISODE_TIMEOUT_TIC = 2100
+EPISODE_TIMEOUT_TIC = 14700
 # エピソード終了時に画面を保持する秒数（目視用）。無人運転では環境変数 EPISODE_END_HOLD_SEC=0
 _HOLD = float(os.environ.get("EPISODE_END_HOLD_SEC", "-1"))
 END_HOLD_SEC = ({"death": 10.0, "exit_candidate": 10.0, "timeout": 5.0} if _HOLD < 0
