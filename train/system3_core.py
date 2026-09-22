@@ -18,7 +18,7 @@ except ImportError:
 
 DEFAULT_MODEL = "gemini-flash-latest"  # tools/gemini_analyze.py と同じ
 MIN_CALL_INTERVAL_SEC = 2.0
-ORDER_TTL_SEC = 10.0
+ORDER_TTL_SEC = 2.0  # 10s だと "Turn around" が約40判断残り、旋回し続けた（Episode 0: turn_left 72回すべて指示付き）
 
 TRIGGER_FRONT_BLOCKED = "front_blocked"
 TRIGGER_AREA_STAGNATION = "area_stagnation"
