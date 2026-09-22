@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 MAX_ITER="${1:-10}"
 CURRENT_CRITERIA="${2:-aggressive_p1}"
 SCENARIO="${3:-deadly_corridor}"
+# 比較条件をそろえるため seed 固定（第4引数、既定は基準線と同じ 1000）
+SEED="${4:-1000}"
 CONSECUTIVE_FAIL=0
 MAX_CONSECUTIVE_FAIL=3
 
@@ -30,7 +32,7 @@ log "Scenario: $SCENARIO"
 
 # 初期実行
 log "[Init] Establishing champion baseline..."
-SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$CURRENT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/init.log" 2>&1 || true
+SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$CURRENT_CRITERIA" --scenario "$SCENARIO" --seed "$SEED" > "$LOG_DIR/init.log" 2>&1 || true
 cp experiments/auto_logs/latest_report.json "$LOG_DIR/champion.json"
 
 # スコア式は tools/score_report.py に一元化（シナリオ対応）
@@ -69,7 +71,8 @@ for i in $(seq 1 "$MAX_ITER"); do
     cp experiments/auto_logs/next_action.md "$LOG_DIR/iter${i}_next.md" 2>/dev/null || true
     
     # 提案された criteria を抽出
-    NEXT_CRITERIA=$(grep -oP 'criteria \K[a-z0-9_]+' "$LOG_DIR/iter${i}_next.md" 2>/dev/null | head -1)
+    # 次のコマンドの criteria 名（--criteria X と run_and_report.sh X の両方の書き方に対応）
+    NEXT_CRITERIA=$(grep -oP '(--criteria |run_and_report\.sh )\K[a-z0-9_]+' "$LOG_DIR/iter${i}_next.md" 2>/dev/null | head -1)
     if [ -z "$NEXT_CRITERIA" ] || [ "$NEXT_CRITERIA" = "$CHAMPION_CRITERIA" ]; then
         log "  → 同じ criteria のため、スキップ"
         log "  → 停止条件: Gemini が新しい提案を出せず"
@@ -121,7 +124,7 @@ $(cat "$LOG_DIR/iter${i}_next.md")
     
     # --- Step 3: 実行 ---
     log "[3/4] Running $NEXT_CRITERIA..."
-    SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$NEXT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/iter${i}_run.log" 2>&1 || true
+    SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$NEXT_CRITERIA" --scenario "$SCENARIO" --seed "$SEED" > "$LOG_DIR/iter${i}_run.log" 2>&1 || true
     cp experiments/auto_logs/latest_report.json "$LOG_DIR/iter${i}_result.json" 2>/dev/null || true
 
     NEW_SCORE=$(python tools/score_report.py "$LOG_DIR/iter${i}_result.json")
