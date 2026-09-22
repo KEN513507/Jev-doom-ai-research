@@ -32,3 +32,20 @@ experiments/hits/
 experiments/semi_auto_*/
 experiments/self_correct_*/
 experiments/auto_logs/
+
+# Logs
+logs/
+experiments/runs/
+experiments/sessions/
+*.log
+
+# Archive
+archive/
+
+# Auto-generated
+_vizdoom.ini
+vizdoom-crash.log
+
+# Backups
+*.bak
+*.py.bak

@@ -138,6 +138,35 @@ def detect_enemy_from_labels(state, min_width: float = 0.0) -> dict:
     }
 
 
+# 拾える物（体力・アーマー・弾薬・武器・パワーアップ・鍵）。装飾（木・柱・樽・死体）は含めない。
+# freedoom2 map01 実測: ArmorBonus, HealthBonus, Stimpack, Medikit, Clip, Shell, Shotgun,
+# Chainsaw, GreenArmor, BlueArmor, Soulsphere。残りは Doom 標準の取得物クラス名。
+ITEM_NAMES = frozenset({
+    "HealthBonus", "Stimpack", "Medikit", "Soulsphere", "Megasphere", "Berserk",
+    "ArmorBonus", "GreenArmor", "BlueArmor",
+    "Clip", "ClipBox", "Shell", "ShellBox", "RocketAmmo", "RocketBox", "Cell", "CellPack", "Backpack",
+    "Chainsaw", "Shotgun", "SuperShotgun", "Chaingun", "RocketLauncher", "PlasmaRifle", "BFG9000",
+    "InvulnerabilitySphere", "BlurSphere", "RadSuit", "Infrared", "Allmap",
+    "BlueCard", "RedCard", "YellowCard", "BlueSkull", "RedSkull", "YellowSkull",
+})
+
+
+def detect_items_from_labels(state) -> dict:
+    """labels_buffer から取得可能アイテムを抽出する（中央判定は敵と同じ基準）"""
+    labels = getattr(state, "labels", None) if state is not None else None
+    items = [lb for lb in (labels or []) if getattr(lb, "object_name", None) in ITEM_NAMES]
+    if not items:
+        return {"item_visible": False, "item_centered": False, "item_names": []}
+    screen_w = float(state.screen_buffer.shape[2])
+    center_x = screen_w / 2.0
+    offset = min(abs(float(lb.x) + float(lb.width) / 2.0 - center_x) for lb in items)
+    return {
+        "item_visible": True,
+        "item_centered": offset < screen_w * CENTER_TOLERANCE_RATIO,
+        "item_names": sorted({lb.object_name for lb in items}),
+    }
+
+
 def compute_red_metrics(screen_buffer, threshold: float = ENEMY_RED_THRESHOLD):
     """画面バッファから red_mean と enemy_visible を計算する"""
     if screen_buffer is None:
@@ -193,6 +222,29 @@ class ForwardBlockDetector:
             return False
         (x0, y0), (x1, y1) = self.positions[0], self.positions[-1]
         return math.hypot(x1 - x0, y1 - y0) < self.max_distance
+
+
+# wall_ahead 判定：front_blocked 中に use を1回試し、同じ地点（WALL_PROBE_RADIUS 単位以内）で
+# 再び front_blocked になればドアではなく壁とみなす。その地点を離れるまで判定を保持し、use を繰り返させない。
+WALL_PROBE_RADIUS = 32.0
+
+
+class WallProbe:
+    def __init__(self, radius: float = WALL_PROBE_RADIUS):
+        self.radius = radius
+        self.use_tried_at = None
+        self._prev_blocked = False
+
+    def update(self, position, last_action, front_blocked: bool) -> bool:
+        """last_action: 前回の観測から今回までに実行した行動。戻り値: wall_ahead"""
+        if self.use_tried_at is not None:
+            (x0, y0), (x1, y1) = self.use_tried_at, position
+            if math.hypot(x1 - x0, y1 - y0) >= self.radius:
+                self.use_tried_at = None
+        if last_action == "use" and self._prev_blocked:
+            self.use_tried_at = position
+        self._prev_blocked = front_blocked
+        return front_blocked and self.use_tried_at is not None
 
 
 # area_stagnation 判定：直近 STAGNATION_WINDOW 判断ステップ（frame_skip=4 で 176tic ≈ ゲーム内5秒）の

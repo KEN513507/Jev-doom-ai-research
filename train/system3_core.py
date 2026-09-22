@@ -1,10 +1,14 @@
-import os
-import time
-import json
-import threading
-from typing import Dict, Any, Optional
+"""System 3（戦略司令塔）: Gemini をトリガー発生時のみ非同期で呼び、Jev への高次指示を更新する。
 
-# google-genai SDK または google.generativeai を使用
+通常時は休眠（API 呼び出しなし）。ボタン選択は常に Jev（System 2）が行い、
+System 3 は Jev への問いかけ文（payload の instructions）に添える指示を1文更新するだけ。
+指示は ORDER_TTL_SEC で失効し、Jev は既定の問いかけに戻る。
+"""
+import json
+import os
+import threading
+import time
+
 try:
     from google import genai
     from google.genai import types
@@ -12,118 +16,130 @@ try:
 except ImportError:
     HAS_GENAI = False
 
-# フレーム問題を排除するための厳格なシステムプロンプト
-SYSTEM_INSTRUCTION = """
-You are a deterministic, zero-hallucination spatial navigation state machine for DOOM.
-Your SOLE PURPOSE is to analyze the game state vector and issue macro goals.
+DEFAULT_MODEL = "gemini-flash-latest"  # tools/gemini_analyze.py と同じ
+MIN_CALL_INTERVAL_SEC = 2.0
+ORDER_TTL_SEC = 10.0
 
-CRITICAL RULES:
-1. Ignore all general knowledge unassociated with standard DOOM mechanics.
-2. If 'front_blocked' is True, your HIGHEST priority is instructing the agent to 'use' (interact) or 'turn'.
-3. OUTPUT ONLY VALID JSON. No prose, no markdown code blocks, no conversational explanations.
-"""
+TRIGGER_FRONT_BLOCKED = "front_blocked"
+TRIGGER_AREA_STAGNATION = "area_stagnation"
+TRIGGER_KEY_EVENT = "key_event"
+
+SYSTEM_INSTRUCTION = """You are the strategic commander (System 3) of a DOOM-playing agent.
+A separate tactical model (Jev) chooses every button press. You only issue one short order that Jev will read.
+You are called only when a trigger fires:
+- front_blocked: moving forward made no progress (a wall or a closed door is directly ahead).
+- area_stagnation: the agent has stayed within a small area for about 5 seconds.
+- key_event: an in-game message about a key (picked up, or a locked door needs one).
+Jev's available actions: move_forward, move_left, move_right, turn_left, turn_right, attack, use.
+If front_blocked is true, the highest priority is to order 'use' (open a door) or a turn (it is a wall).
+Base the order only on the given state. Reply with JSON only."""
+
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "macro_goal": {
+            "type": "string",
+            "description": "One imperative sentence (max 20 words) for Jev.",
+        }
+    },
+    "required": ["macro_goal"],
+}
+
+
+def local_order(triggers, state) -> str:
+    """API キーなし・SDK なし・Gemini エラー時のローカル規則"""
+    if TRIGGER_KEY_EVENT in triggers:
+        events = "; ".join(state.get("key_events") or []) or "key message"
+        return f"Key event ({events}): find the door of the matching color and go through it."
+    if TRIGGER_FRONT_BLOCKED in triggers:
+        return "If front_blocked=yes, select 'use' to open a door; if it stays blocked, turn to find another way."
+    return "You have stayed in the same small area too long: turn around and head for an unexplored passage."
+
 
 class StrategicCoreSystem3(threading.Thread):
-    """
-    System 3: Gemini Flash を用いた非同期・戦略司令塔クラス
-    ゲームのメインループ（35 tics/s）を一切止めることなく、バックグラウンドで高次の目標を更新します。
-    """
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, model_name: str = DEFAULT_MODEL, *, clock=time.monotonic):
         super().__init__(daemon=True)
         self.model_name = model_name
-        self.api_key = os.environ.get("GEMINI_API_KEY")
-        
-        # 共有ステート（System 1 / 2 と非同期でデータ授受）
-        self.latest_state: Dict[str, Any] = {}
-        self.current_instruction: str = "Explore area and proceed forward."
-        self.should_trigger: bool = False
-        self.lock = threading.Lock()
-        self.running = True
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._running = True
+        self._latest_state = {}
+        self._pending_triggers = set()
+        self._order = None
+        self._order_expires = 0.0
+        self._last_call = float("-inf")
 
-        if HAS_GENAI and self.api_key:
-            self.client = genai.Client(api_key=self.api_key)
+        api_key = os.environ.get("GEMINI_API_KEY")
+        self.client = None
+        if not api_key:
+            print("[System 3] GEMINI_API_KEY 未設定: ダミーモード（ローカル規則）で動作")
+        elif not HAS_GENAI:
+            print("[System 3] google-genai 未導入: ダミーモード（ローカル規則）で動作")
         else:
-            self.client = None
-            if not self.api_key:
-                print("[System 3 Warning] GEMINI_API_KEY is not set. Running in dummy mode.")
+            self.client = genai.Client(api_key=api_key)
 
-    def update_state(self, state_vector: Dict[str, Any]):
-        """System 1 / 2 からゲームの最新状況を受け取る (軽量・ロック処理)"""
-        with self.lock:
-            self.latest_state = state_vector
-            # front_blocked=True などの緊急イベント発生時に推論フラグを立てる
-            if state_vector.get("front_blocked", False):
-                self.should_trigger = True
+    def update_state(self, state: dict, triggers=()):
+        """毎判断ステップ呼ぶ。triggers が空なら状態を保持するだけ（推論しない）"""
+        with self._lock:
+            self._latest_state = dict(state)
+            self._pending_triggers.update(triggers)
 
-    def get_current_instruction(self) -> str:
-        """System 2 (Jev) が参照する最新のプロンプト（CRITERIA）指示を取得"""
-        with self.lock:
-            return self.current_instruction
+    def get_current_instruction(self):
+        """有効な指示があれば返す。失効・未発行なら None"""
+        with self._lock:
+            if self._order is not None and self._clock() < self._order_expires:
+                return self._order
+            return None
 
     def run(self):
-        """バックグラウンドで Gemini Flash API を必要時のみ呼び出す非同期ループ"""
-        last_call_time = 0
-        min_call_interval = 2.0  # API消費と連打を防ぐ安全間隔（秒）
-
-        while self.running:
+        while self._running:
             time.sleep(0.1)
-            now = time.time()
+            self.step()
 
-            # 発動条件: イベント発生時 (front_blocked=True) または一定時間経過時
-            with self.lock:
-                trigger = self.should_trigger or (now - last_call_time > 10.0)
-                current_state = dict(self.latest_state)
+    def step(self) -> bool:
+        """保留中のトリガーがあり最小間隔を過ぎていれば1回推論する。推論したら True"""
+        with self._lock:
+            if not self._pending_triggers:
+                return False
+            if self._clock() - self._last_call < MIN_CALL_INTERVAL_SEC:
+                return False
+            triggers = sorted(self._pending_triggers)
+            self._pending_triggers.clear()
+            state = dict(self._latest_state)
+            self._last_call = self._clock()
 
-            if trigger and (now - last_call_time >= min_call_interval):
-                self.should_trigger = False
-                last_call_time = now
-                self._query_gemini(current_state)
+        order = self._decide(triggers, state)
+        with self._lock:
+            self._order = order
+            self._order_expires = self._clock() + ORDER_TTL_SEC
+        print(f"[System 3] triggers={triggers} -> {order}")
+        return True
 
-    def _query_gemini(self, state: Dict[str, Any]):
-        """Context Isolation（極小化データ）のみを Gemini に渡して JSON 推論を実行"""
-        if not self.client:
-            # APIキーがない場合のフォールバック（ローカルルール判断）
-            if state.get("front_blocked"):
-                with self.lock:
-                    self.current_instruction = "Front is blocked. Use 'use' button immediately to open the door."
-            return
-
-        # Gemini に渡す極小化された入力テキスト（フレーム問題対策）
-        minimal_input = {
-            "front_blocked": state.get("front_blocked", False),
-            "health": state.get("health", 100),
-            "enemy_visible": state.get("enemy_visible", False),
-            "enemy_count": state.get("enemy_count", 0),
-            "position": state.get("position", (0, 0))
-        }
-
-        prompt = f"Current DOOM State Vector: {json.dumps(minimal_input)}\nProvide JSON decision."
-
+    def _decide(self, triggers, state) -> str:
+        if self.client is None:
+            return local_order(triggers, state)
         try:
-            # Gemini 2.0 / 2.5 Flash の高速 JSON 推論呼び出し
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.1,  # 決定論的な出力を保証
-                    response_mime_type="application/json",  # 強制 JSON フォーマット
-                )
-            )
-
-            res_json = json.loads(response.text)
-            macro_goal = res_json.get("macro_goal", "Explore forward.")
-
-            with self.lock:
-                self.current_instruction = macro_goal
-                print(f"\n[System 3 Gemini Flash Output] {macro_goal}")
-
+            return self._query_gemini(triggers, state)
         except Exception as e:
-            # 通信エラーやフォーマット異常時のガードレール（ゲームを止めない）
-            print(f"\n[System 3 Error] {e} -> Fallback to default instruction.")
-            if state.get("front_blocked"):
-                with self.lock:
-                    self.current_instruction = "Front is blocked. Use 'use' to open door."
+            print(f"[System 3] Gemini error: {e} -> ローカル規則で代替")
+            return local_order(triggers, state)
+
+    def _query_gemini(self, triggers, state) -> str:
+        payload = {"triggers": triggers, **state}
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=f"Current DOOM state: {json.dumps(payload)}",
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                temperature=0.1,
+                response_mime_type="application/json",
+                response_json_schema=RESPONSE_SCHEMA,
+            ),
+        )
+        goal = json.loads(response.text)["macro_goal"].strip()
+        if not goal:
+            raise ValueError("empty macro_goal")
+        return goal
 
     def stop(self):
-        self.running = False
+        self._running = False

@@ -12,6 +12,7 @@ sys.modules.setdefault("vizdoom", types.ModuleType("vizdoom"))
 from train.state_utils import (
     ACTIVE_REGION,
     ENEMY_RED_THRESHOLD,
+    ForwardBlockDetector,
     SLICE_CONFIG,
     USE_RESOLUTION,
     build_state_text,
@@ -24,6 +25,7 @@ from train.jev_agent import (
     CRITERIA_SETS,
     SYSTEM1_WIDTH_THRESHOLD,
     build_payload,
+    execute_action,
     extract_choice_and_probs,
     resolve_action,
     should_force_attack,
@@ -316,6 +318,109 @@ class TestLabelsDetection(unittest.TestCase):
         payload = build_payload("x", criteria="aggressive_p0")
         crit = payload["questions"]["next_action"]["criteria"]
         self.assertIn("MUST immediately", crit["attack"])
+
+
+class TestFullMap(unittest.TestCase):
+    def test_full_map_has_strafe_buttons(self):
+        from train.scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA
+
+        buttons = SCENARIO_BUTTONS["full_map"]
+        self.assertIn("MOVE_LEFT", buttons)
+        self.assertIn("MOVE_RIGHT", buttons)
+        self.assertEqual(set(SCENARIO_CRITERIA["full_map"]), {b.lower() for b in buttons})
+        self.assertIn("full_map", FULL_MAP_SCENARIOS)
+
+    def test_tactical_peeking_keys_fit_full_map(self):
+        from train.scenarios import SCENARIO_BUTTONS
+
+        keys = set(CRITERIA_SETS["tactical_peeking"])
+        self.assertLessEqual(keys, {b.lower() for b in SCENARIO_BUTTONS["full_map"]})
+        self.assertIn("move_left", keys)
+        self.assertIn("move_right", keys)
+        self.assertIn("use", keys)
+        self.assertIn("USE", SCENARIO_BUTTONS["full_map"])
+
+    def test_doom_imp_detected(self):
+        # freedoom2 map01 のインプは object_name="DoomImp"
+        state = _fake_state_with_labels([_fake_label("DoomImp", x=70, width=12)])
+        info = detect_enemy_from_labels(state)
+        self.assertTrue(info["enemy_visible"])
+        self.assertEqual(info["enemy_names"], ["DoomImp"])
+
+    def test_tactical_peeking_use_gated_by_front_blocked(self):
+        crit = CRITERIA_SETS["tactical_peeking"]
+        self.assertIn("front_blocked=yes", crit["use"])
+        self.assertIn("front_blocked=yes", crit["move_forward"])
+
+
+class TestFrontBlocked(unittest.TestCase):
+    def _run(self, steps):
+        det = ForwardBlockDetector(window=3, max_distance=8.0)
+        return [det.update(pos, action) for pos, action in steps]
+
+    def test_blocked_when_forward_without_progress(self):
+        # 最初の観測 + move_forward 3回で位置が変わらない → 3回目で blocked
+        steps = [((0, 0), None)] + [((0, 0), "move_forward")] * 3
+        self.assertEqual(self._run(steps), [False, False, False, True])
+
+    def test_not_blocked_while_moving(self):
+        steps = [((0, 0), None)] + [((29 * i, 0), "move_forward") for i in range(1, 5)]
+        self.assertFalse(any(self._run(steps)))
+
+    def test_other_action_resets_window(self):
+        steps = (
+            [((0, 0), None)]
+            + [((0, 0), "move_forward")] * 2
+            + [((0, 0), "turn_left")]
+            + [((0, 0), "move_forward")] * 2
+        )
+        self.assertFalse(any(self._run(steps)))
+
+    def test_state_text_includes_front_blocked_only_when_given(self):
+        state = _fake_state_with_labels([])
+        text_yes, _, _ = state_to_text(state, [100], use_labels=True, front_blocked=True)
+        text_none, _, _ = state_to_text(state, [100], use_labels=True)
+        self.assertIn("front_blocked=yes", text_yes)
+        self.assertNotIn("front_blocked", text_none)
+
+    def test_resolve_action_passes_front_blocked_to_jev(self):
+        seen = []
+
+        def decide(text):
+            seen.append(text)
+            return {"answers": {"next_action": {"choice": "use"}}}
+
+        choice, source, _ = resolve_action(
+            _fake_state_with_labels([]), [100], use_labels=True,
+            min_enemy_width=8.0, decide=decide, front_blocked=True,
+        )
+        self.assertEqual((choice, source), ("use", "system2"))
+        self.assertIn("front_blocked=yes", seen[0])
+
+
+class _FakeGame:
+    def __init__(self):
+        self.calls = []
+
+    def make_action(self, vec, tics):
+        self.calls.append((list(vec), tics))
+        return 1.0
+
+    def is_episode_finished(self):
+        return False
+
+
+class TestExecuteAction(unittest.TestCase):
+    def test_tap_presses_one_tic_then_releases(self):
+        game = _FakeGame()
+        reward = execute_action(game, [0, 1, 0], 4, tap=True)
+        self.assertEqual(game.calls, [([0, 1, 0], 1), ([0, 0, 0], 3)])
+        self.assertEqual(reward, 2.0)
+
+    def test_hold_uses_full_frame_skip(self):
+        game = _FakeGame()
+        execute_action(game, [1, 0, 0], 4)
+        self.assertEqual(game.calls, [([1, 0, 0], 4)])
 
 
 if __name__ == "__main__":
