@@ -50,3 +50,6 @@ vizdoom-crash.log
 *.bak
 *.py.bak
 jev_visualization.png
+*.bak_*
+*.bak_a1
+*.bak_bgm
