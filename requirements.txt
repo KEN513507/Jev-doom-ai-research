@@ -13,3 +13,6 @@ numpy
 # 実験管理
 pyyaml
 tqdm
+
+# Jev API
+requests
