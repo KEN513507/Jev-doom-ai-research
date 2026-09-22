@@ -10,7 +10,7 @@
 ## Finding 2: criteria の強度が判断を支配する
 - 「attack は得点の主要手段」と書く → `attack` 0.97 が 30 ステップ連続。
 - 「後退は危険時のみ」と書く → `move_backward` 0.0。
-- 状況依存に書き換え（attack は「敵が中央に clairement 見える場合のみ」、
+- 状況依存に書き換え（attack は「敵が中央に 明確に 見える場合のみ」、
   前進は「敵が見えない時」）＋ `enemy_visible` の二値化 →
   敵あり: `attack`、敵なし: `move_forward` 1.0 と切り替わることを確認。
 - 結論: criteria の表現が確率分布を大きく左右する。バランス設計が必須。
@@ -21,7 +21,7 @@
 - 判断の質は state と criteria に依存（Finding 1・2）。
 - `set_ticrate(4)`（250ms/tic）で同期実行可能。実効レート約 4 decisions/s。
 
-## 目標3（判断可視化）の達成
+## Finding 4: 判断可視化の達成
 - `jev_visualization.png`: 行動確率ヒートマップ＋報酬＋体力の時系列を確認。
 - 報酬の死亡スパイク（-100）と体力低下が記録され、可視化として成立。
 ## Finding 5: 解像度・領域の標準化

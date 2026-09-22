@@ -1,163 +1,113 @@
-ご指摘の通り、先ほどの引き継ぎ書は**Claude Codeの最新ベストプラクティスからは外れています**。特に「CLAUDE.md」の活用と「プロンプト設計」の原則に反しています。以下、最新の公式・コミュニティ知見に基づき、修正点を整理します。
+```
+# DOOM AI Research — Jev × ViZDoom
 
----
+## Purpose
 
-## 🔍 先ほどの引き継ぎ書の問題点
+TypeSafe AIのJev（クラウドAPI）にDOOM（ViZDoom）をプレイさせ、判断プロセスの可視化と評価関数（criteria）の影響を研究する。ゲームクリアは目的ではない。**リアルタイム可視化**と**判断の記録**が本質。
 
-| 問題点 | 理由 |
-|--------|------|
-| **CLAUDE.md を無視** | プロジェクトの永続コンテキストは `CLAUDE.md` に書くのが原則。引き継ぎ書をそのまま渡すのは非効率 |
-| **長すぎる** | `CLAUDE.md` は**150行以下**（推奨60行）が理想。先ほどの引き継ぎ書は200行超 |
-| **「手順」を書いている** | Claude Codeは「結果」を記述する方が効果的。手順（ステップ）を細かく書くと、かえって柔軟性を損なう |
-| **コンテキスト管理への言及なし** | `/clear`、サブエージェント、`/cost` などの機能活用が前提 |
-| **検証（テスト）の指示は良い** | ただし「自分でテストを実行して確認せよ」と明示すべき |
+## Environment
 
----
-
-## ✅ Claude Code 最新ベストプラクティス（2025-2026）
-
-### 1. CLAUDE.md をプロジェクトの「憲法」として使う
-
-Claude Codeは**セッション開始時に必ず `CLAUDE.md` を読み込みます**。ここに以下を書くのが推奨です：
-
-- よく使うbashコマンド
-- コアファイルとユーティリティ関数
-- コードスタイルガイドライン
-- テスト手順
-- リポジトリの慣習（ブランチ命名、マージ vs リベース）
-- 開発環境のセットアップ
-
-**推奨行数：150行以下（理想は60行程度）**。それ以上は `.claude/rules/` に分割します。
-
-### 2. プロンプトは「結果」を書く（手順は書かない）
-
-Anthropic公式の推奨：
-
-> **Describe the outcome, not the steps.** Say what you want and let Claude find the files.
-
-また、タスクは**最初のターンで完全に指定**するのが最も効率的です：
-
-> Well-specified task descriptions that incorporate intent, constraints, acceptance criteria, and relevant file locations give Opus 4.7 the context it needs to deliver stronger outputs.
-
-### 3. コンテキスト管理を徹底する
-
-- **`/clear` を5〜7プロンプトごとに実行**（トークン効率化）
-- **サブエージェント（Haiku）** を探索に使う
-- **`/cost` で予算監視**
-
-### 4. Plan Mode を活用する
-
-大きなタスクは**Plan Mode**で計画を立ててから実装します：
-
-> Delimita i compiti grandi con Plan Mode prima...
-
-### 5. 検証をプロンプトに含める
-
-> Give it a way to check its own work. Ask for run, test, compare, or verify in the same prompt so Claude iterates instead of stopping after one attempt.
-
----
-
-## 🛠 修正版：Claude Codeへの正しい指示方法
-
-### ① まず `CLAUDE.md` を作成（プロジェクトルート）
-
-```markdown
-# DOOM AI Research - Jev × ViZDoom
-
-## プロジェクト概要
-TypeSafe AIのJev（クラウドAPI）にDOOMをプレイさせ、判断プロセスを可視化する研究。
-ゲームクリアは目的ではない。**リアルタイム可視化**と**判断の記録**が本質。
-
-## 環境
 - OS: Ubuntu 24.04 LTS
 - GPU: GTX 970 (Maxwell, sm_52, 4GB VRAM)
+- CPU: Intel i5-4570
 - Python: 3.10 (conda env: `vizdoom`)
-- ViZDoom: 1.3.1
-- Jev API: `https://api.typesafe.ai/v1/systemone` (model=`jev-latest`)
-- APIレイテンシ: median 249ms
+- ViZDoom: 1.3.1 (ZDOOM 2.8.1+)
+- Jev API: `https://api.typesafe.ai/v1/systemone` (model=`jev-latest`, 実体: jev-1.13.0)
+- API latency: median 249ms (Session reuse + NO_PROXY 設定済み)
+- Project path: `/home/ken/projects/_Jev/doom-ai-research`
+- Git remote: `https://github.com/KEN513507/Jev-doom-ai-research`
 
-## 制約（厳守）
-- AIは一切Git操作を行わない（commit/push禁止）
-- APIキーは環境変数 `TYPESAFE_API_KEY` から読み込む
-- `game.set_window_visible(True)` をデフォルト維持
-- ユーザーのPCスペックを言い訳にしない
+## Constraints (MUST)
 
-## ディレクトリ構造
-- `train/jev_agent.py` - メインエージェント
-- `train/state_utils.py` - 状態検出（labels_buffer, red_mean）
-- `train/scenarios.py` - シナリオ別ボタン・criteria定義
-- `experiments/` - 実験結果
+1. **AIは一切Git操作を行わない**（commit/push禁止）。すべて人間が実行。
+2. **APIキーは環境変数 `TYPESAFE_API_KEY` から読み込む**。ハードコード禁止。
+3. **`game.set_window_visible(True)` をデフォルト維持**。リアルタイム可視化が最優先。
+4. **ヘッドレス化は明示的な例外のみ**（ユーザー確認後）。
+5. **ユーザーのPCスペックを言い訳にしない**（GTX 970で721fps実測済み）。
 
-## よく使うコマンド
+## Directory Structure
+
+```
+train/
+  jev_agent.py        # メインエージェント（実行対象）
+  state_utils.py      # 状態検出（labels_buffer, red_mean, front_blocked）
+  calib_red.py        # 赤強度キャリブレーション
+  scenarios.py        # シナリオ別ボタン・criteria定義
+tests/                # pytest
+experiments/          # 実験結果
+docs/                 # objective.md, findings.md
+tools/                # 自動化スクリプト（self_correcting_loop.sh等）
+```
+
+## Common Commands
+
 ```bash
 cd ~/projects/_Jev/doom-ai-research
 conda activate vizdoom
-python train/jev_agent.py --criteria aggressive_p0 --use-labels
+
+# deadly_corridor 実行
+python train/jev_agent.py --criteria tactical_p3 --use-labels
+
+# full_map 実行
+python train/jev_agent.py --scenario full_map --criteria tactical_peeking --use-labels
+
+# 自動ループ
+./tools/self_correcting_loop.sh 10 tactical_p2
+
+# 検証
+python -m py_compile train/jev_agent.py && echo COMPILE_OK
+pytest tests/ -v
 ```
 
-## 現在の課題
-- `--min-width` argparse定義が欠落（344行目で参照 → AttributeError）
-- System 1/2分離（反射層）が未実装
-- 被弾ゼロがcriteria調整では達成不可能（実測済み）
+## Key API
 
-## テスト
-- `python -m py_compile train/jev_agent.py`
-- `pytest tests/ -v`（存在する場合）
-```
+### train/jev_agent.py
+- `CRITERIA_SETS`: criteria定義（baseline, aggressive_p0/p1, tactical_p1〜p6, take_cover_p1, tactical_peeking等）
+- `ACTION_BUTTONS`: criteriaキー → ViZDoomボタン名（シナリオ応じて動的）
+- `resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True)`: System1/2ディスパッチャ
+- `should_force_attack(label_info)`: System1条件（ChaingunGuy特例あり）
+- `get_jev_decision(api_key, state_text, criteria, timeout)`: API呼び出し（Session再利用）
 
-### ② Claude Codeへのプロンプト（結果ベース）
+### train/state_utils.py
+- `MIN_ENEMY_WIDTH = 8.0`: 視認判定の最小幅
+- `SYSTEM1_WIDTH_THRESHOLD = 20.0`: System1発動の至近距離判定
+- `ENEMY_RED_THRESHOLD = 48.0`: red_mean閾値
+- `detect_enemy_from_labels(state, min_width)`: labels_bufferから敵検出
+- `front_blocked`: 壁検出（full_map用）
 
-```
-`train/jev_agent.py` の `--min-width` argparse定義を追加し、
-System 1/2分離を実装してください。
-
-【意図】
-- クラウドAPI 250msの遅延を反射層で吸収し、被弾を減らす
-- System 1: 敵が中央・近距離（width>=20）の時、Jevを待たずに attack を強制
-- System 2: それ以外は Jev API に判断を委ねる
-
-【受け入れ基準】
-- `python -m py_compile train/jev_agent.py` が通ること
-- `python train/jev_agent.py --criteria aggressive_p0 --use-labels` がエラーなく起動
-- 3エピソード完走し、各エピソード終了時に `sys1` と `sys2` が出力される
-- 既存テストがすべて通過
-
-【関連ファイル】
-- `train/jev_agent.py`（mainループ、argparse）
-- `train/state_utils.py`（detect_enemy_from_labels）
-- `tests/test_jev_agent.py`
-
-【検証】
-実装後、自分でテストを実行し、結果を報告してください。
-```
-
-### ③ 大きなタスクは Plan Mode で開始
-
-```
-/plan
-System 1/2分離を実装したい。まず計画を立てて。
-```
-
-これでClaudeが**計画を提示**し、承認後に実装します。
-
----
-
-## 📋 まとめ：先ほどの引き継ぎ書との違い
-
-| 項目 | 先ほどの引き継ぎ書 | 正しい方法 |
-|------|-------------------|-----------|
-| コンテキスト | 長文をそのまま渡す | `CLAUDE.md` に分割（150行以下） |
-| プロンプト | 手順を細かく指定 | **結果と受け入れ基準**を指定 |
-| タスク開始 | 直接依頼 | **Plan Mode** で計画→承認→実装 |
-| 検証 | 言及なし | **自分でテスト実行**を明示 |
-| コンテキスト管理 | 言及なし | `/clear`、サブエージェント活用 |
-
----
+### train/scenarios.py
+- `SCENARIO_BUTTONS`: 10シナリオのボタン定義
+- `SCENARIO_CRITERIA`: シナリオ別標準criteria
 
 ## Current State (as of 2026-09-22 夜)
 
-- Champion: tactical_p3（hits 2.8、sys2 90.8%）。次点tactical_p2（hits 2.33、kills=2確認）
+- Champion: **tactical_p3**（hits 2.8, health 28.0, steps 164.8, sys2 90.8%）
+- 次点: tactical_p2（hits 2.33, kills=2 確認済み）
 - System 1閾値方針が未決（20 vs 8.0）。立上り限定の呼び出し側が欠落中
-- full_map対応は実装済み、動作検証はこれから
-- 研究目的・指標は `docs/objective.md`、実測記録は `docs/findings.md` を参照
-- 制約：AIはGit操作禁止、APIキーは環境変数、ウィンドウ表示必須
+- full_map 対応実装済み、`front_blocked` 検出が機能していない
+- 詳細は `docs/objective.md` と `docs/findings.md`
+
+## Enemy Detection Reference（実測）
+
+| 敵 | width | 備考 |
+|----|-------|------|
+| Zombieman | 10〜18 | 右寄り (x=100-104) |
+| ShotgunGuy | 10〜15 | 左側面 (x=40-50) |
+| ChaingunGuy | **0** | width=0例外で検出、最危険 |
+
+解像度: RES_160X120（画面幅160px）
+
+## Code Style
+
+- Python 3.10, 型ヒント使用
+- インデント: スペース4個（タブ禁止）
+- docstring: 日本語OK
+- ログ出力は `print()`（logging未使用）
+
+## Notes
+
+- 変更は1つずつ。複数同時変更は因果不明。
+- ユーザーはウィンドウで目視評価する。
+- 研究の成果は「被弾ゼロ」だけでなく「Jevの判断プロセスの可視化」も含む。
+- 被弾ゼロはクラウドJevでは物理的に不可能（ChaingunGuy初弾57ms vs API遅延250ms）。
+```
