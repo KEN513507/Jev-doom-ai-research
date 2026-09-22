@@ -32,7 +32,7 @@ def get_slice():
     return SLICE_CONFIG[USE_RESOLUTION][ACTIVE_REGION]
 
 
-def compute_red_metrics(screen_buffer):
+def compute_red_metrics(screen_buffer, threshold: float = ENEMY_RED_THRESHOLD):
     """画面バッファから red_mean と enemy_visible を計算する"""
     if screen_buffer is None:
         return 0.0, False
@@ -43,7 +43,7 @@ def compute_red_metrics(screen_buffer):
         red_mean = float(region[0].mean())
     except Exception:
         return 0.0, False
-    enemy_visible = red_mean > ENEMY_RED_THRESHOLD
+    enemy_visible = red_mean > threshold
     return red_mean, enemy_visible
 
 

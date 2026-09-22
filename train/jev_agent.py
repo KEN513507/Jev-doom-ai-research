@@ -11,12 +11,20 @@ import vizdoom as vzd
 
 
 try:
-    from train.state_utils import compute_red_metrics, build_state_text
+    from train.state_utils import (
+        ENEMY_RED_THRESHOLD,
+        compute_red_metrics,
+        build_state_text,
+    )
 except ImportError:  # python train/jev_agent.py 直接実行時
-    from state_utils import compute_red_metrics, build_state_text
+    from state_utils import (
+        ENEMY_RED_THRESHOLD,
+        compute_red_metrics,
+        build_state_text,
+    )
 
 
-JEV_API_URL = os.environ.get("JEV_API_URL", "http://127.0.0.1:8081/v1/systemone")
+JEV_API_URL = os.environ.get("JEV_API_URL", "https://api.typesafe.ai/v1/systemone")
 JEV_MODEL = "jev-latest"
 JEV_TIMEOUT = float(os.environ.get("JEV_TIMEOUT", "5.0"))
 
@@ -33,8 +41,63 @@ ACTION_BUTTONS = {
 }
 
 
-def build_payload(state_text: str) -> dict:
+# 実験用の criteria セット（キー集合は ACTION_BUTTONS と一致させること）
+CRITERIA_SETS = {
+    "baseline": {
+        "move_forward": "Advance toward the goal. Do this when no enemy is visible, or after defeating one, to make progress.",
+        "move_backward": "Retreat only if health is critically low AND the enemy is very close.",
+        "turn_left": "Rotate to scan for enemies or align with a corridor.",
+        "turn_right": "Rotate to scan for enemies or align with a corridor.",
+        "attack": "Fire ONLY if an enemy is clearly visible in the center of view. Do NOT attack if no enemy is visible.",
+    },
+    "aggressive": {
+        "move_forward": "Advance toward the enemy to close distance.",
+        "move_backward": "Almost never retreat. Holding ground and firing is preferred.",
+        "turn_left": "Quickly turn to face the enemy.",
+        "turn_right": "Quickly turn to face the enemy.",
+        "attack": "Fire whenever an enemy is visible, even if off-center. Attack is the top priority. Do NOT attack if no enemy is visible.",
+    },
+    "defensive": {
+        "move_forward": "Advance cautiously only when no enemy is visible and health is sufficient.",
+        "move_backward": "Retreat to safety when an enemy is visible or health is dropping. Survival comes first.",
+        "turn_left": "Rotate to check surroundings before moving.",
+        "turn_right": "Rotate to check surroundings before moving.",
+        "attack": "Fire ONLY if an enemy is clearly visible in the center of view AND there is no immediate danger. Do NOT attack if no enemy is visible.",
+    },
+    "explorer": {
+        "move_forward": "Always keep moving forward to expand explored area. This is the top priority, ignore enemies.",
+        "move_backward": "Never retreat. Keep pushing forward.",
+        "turn_left": "Turn only to unblock the path or follow a corridor.",
+        "turn_right": "Turn only to unblock the path or follow a corridor.",
+        "attack": "Do not go out of your way to attack. Fire only as a last resort. Do NOT attack if no enemy is visible.",
+    },
+}
+
+# criteria ごとの敵検出閾値（red_mean > threshold で enemy_visible=yes）
+THRESHOLDS = {
+    "baseline": 48.0,
+    "aggressive": 40.0,
+    "defensive": 60.0,
+    "explorer": 70.0,
+}
+
+
+def build_payload(state_text: str, criteria: str | dict = "baseline") -> dict:
     """Jev API に送る payload を組み立てる"""
+    if isinstance(criteria, str):
+        try:
+            criteria_dict = CRITERIA_SETS[criteria]
+        except KeyError:
+            raise ValueError(
+                f"Unknown criteria: {criteria!r} (choose from {sorted(CRITERIA_SETS)})"
+            )
+    else:
+        criteria_dict = criteria
+    if set(criteria_dict) != set(ACTION_BUTTONS):
+        raise ValueError(
+            f"criteria keys must match actions {sorted(ACTION_BUTTONS)}, "
+            f"got {sorted(criteria_dict)}"
+        )
     return {
         "model": JEV_MODEL,
         "state": state_text,
@@ -42,13 +105,7 @@ def build_payload(state_text: str) -> dict:
             "next_action": {
                 "type": "choice",
                 "instructions": "Choose the single best next action for the DOOM agent.",
-                "criteria": {
-                    "move_forward": "Advance toward the goal. Do this when no enemy is visible, or after defeating one, to make progress.",
-                    "move_backward": "Retreat only if health is critically low AND the enemy is very close.",
-                    "turn_left": "Rotate to scan for enemies or align with a corridor.",
-                    "turn_right": "Rotate to scan for enemies or align with a corridor.",
-                    "attack": "Fire ONLY if an enemy is clearly visible in the center of view. Do NOT attack if no enemy is visible.",
-                },
+                "criteria": dict(criteria_dict),
             }
         },
     }
@@ -156,7 +213,7 @@ def main():
     # --- 初期化: 極限軽量化 ---
     game = vzd.DoomGame()
     game.load_config(f"{vzd.scenarios_path}/deadly_corridor.cfg")
-    game.set_window_visible(False)  # ヘッドレス
+    game.set_window_visible(True)  # ウィンドウ表示（リアルタイム可視化が要件のためTrueを維持）
     game.set_screen_resolution(vzd.ScreenResolution.RES_160X120)
     game.set_depth_buffer_enabled(False)
     game.set_labels_buffer_enabled(False)
