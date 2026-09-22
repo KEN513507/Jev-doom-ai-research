@@ -49,3 +49,4 @@ vizdoom-crash.log
 # Backups
 *.bak
 *.py.bak
+jev_visualization.png

@@ -16,10 +16,11 @@ class TestJevDelegation(unittest.TestCase):
         self.assertEqual(actions.count("move_forward"), 6)
 
     def test_combat_is_decided_by_jev(self):
+        # D2 決定（2026-09-23）: COMBAT 時は attack 強制が正。Jev 委譲の旧期待を更新
         ctl = TacticalController()
         order = ctl.update(enemy_visible=True, front_blocked=False, position=(0.0, 0.0))
         self.assertEqual(ctl.state, TacticalState.COMBAT)
-        self.assertIsNone(order["action"])
+        self.assertEqual(order["action"], "attack")
 
 
 if __name__ == "__main__":

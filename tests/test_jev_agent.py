@@ -160,6 +160,16 @@ class TestLabelsDetection(unittest.TestCase):
         self.assertIn("enemy_count=1", text)
         self.assertIn("enemy_types=Zombieman", text)
 
+    def test_state_to_text_took_damage_flag(self):
+        # Phase 3a: took_damage の有無が yes/no で載る。None なら載らない（既存の振る舞い維持）
+        state = _fake_state_with_labels([_fake_label("Zombieman", x=75, width=10)])
+        text, _, _ = state_to_text(state, [90], use_labels=True, took_damage=True)
+        self.assertIn("took_damage=yes", text)
+        text, _, _ = state_to_text(state, [100], use_labels=True, took_damage=False)
+        self.assertIn("took_damage=no", text)
+        text, _, _ = state_to_text(state, [100], use_labels=True)
+        self.assertNotIn("took_damage", text)
+
     def test_state_to_text_labels_override_red(self):
         # red が高くても labels に敵がいなければ not visible
         state = _fake_state_with_labels(
@@ -206,7 +216,8 @@ class TestLabelsDetection(unittest.TestCase):
         self.assertFalse(info["enemy_visible"])
 
     def test_system1_trigger_boundary(self):
-        # 閾値ちょうど20 → 発動、19.9 → 不発、0（ChaingunGuy）→ 不発（System2に委ねる）
+        # D2 決定（2026-09-23、閾値 20.0 維持）: ちょうど20 → 発動、19.9 → 不発、
+        # 0.0 → 発動（width=0 保険。ChaingunGuy 以外でも反射する）
         base = {"enemy_visible": True, "enemy_centered": True}
         self.assertTrue(
             should_force_attack({**base, "nearest_enemy_width": 20.0})
@@ -214,7 +225,7 @@ class TestLabelsDetection(unittest.TestCase):
         self.assertFalse(
             should_force_attack({**base, "nearest_enemy_width": 19.9})
         )
-        self.assertFalse(
+        self.assertTrue(
             should_force_attack({**base, "nearest_enemy_width": 0.0})
         )
 
@@ -255,7 +266,8 @@ class TestLabelsDetection(unittest.TestCase):
         self.assertIn("Zombieman", info["enemy_names"])
 
     def test_system1_defers_zero_width_enemy_to_api(self):
-        # ChaingunGuy（width=0、中央）はSystem1閾値未満のためSystem2（Jev）に委ねる
+        # D2 決定（2026-09-23）: ChaingunGuy（width=0）は最危険のため System1 が即 attack。
+        # Jev 委譲の旧期待を更新（API は呼ばれない）
         calls = []
 
         def decide(text):
@@ -266,8 +278,8 @@ class TestLabelsDetection(unittest.TestCase):
         choice, source, _ = resolve_action(
             state, [100], use_labels=True, min_enemy_width=8.0, decide=decide
         )
-        self.assertEqual((choice, source), ("attack", "system2"))
-        self.assertEqual(len(calls), 1)
+        self.assertEqual((choice, source), ("attack", "system1"))
+        self.assertEqual(calls, [])
 
     def test_system2_calls_api(self):
         calls = []
@@ -358,7 +370,8 @@ class TestFullMap(unittest.TestCase):
         crit = CRITERIA_SETS["tactical_peeking"]
         self.assertIn("front_blocked=yes", crit["use"])
         self.assertIn("item_visible=yes", crit["move_forward"])
-        self.assertIn("Fire ONLY when enemy_centered=yes", crit["attack"])
+        # 修正A（2026-09-22、A/B 実走で効果確認）: 中央待ちせず見えたら撃つ。旧期待を更新
+        self.assertIn("Fire whenever enemy_visible=yes", crit["attack"])
 
 
 class TestFrontBlocked(unittest.TestCase):
