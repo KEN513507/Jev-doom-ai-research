@@ -85,6 +85,10 @@ for line in lines:
             "ammo_used": kv.get("ammo_used", 0),
             "attack_steps": kv.get("attack_steps", 0),
             "dmg_hits": kv.get("dmg_hits", 0),
+            "damage_taken": kv.get("damage_taken"),
+            "ammo_min": kv.get("ammo_min", -1),
+            "melee_steps": kv.get("melee_steps", 0),
+            "seed": kv.get("seed", -1),
         })
     elif "!!! HIT" in line:
         hm = re.search(r'HIT #(\d+) at step=(\d+): (\d+) -> (\d+)', line)
@@ -120,6 +124,11 @@ if episodes:
         "avg_ammo_used": sum(e["ammo_used"] for e in episodes) / n,
         "avg_attack_steps": sum(e["attack_steps"] for e in episodes) / n,
         "avg_dmg_hits": sum(e["dmg_hits"] for e in episodes) / n,
+        "avg_damage_taken": (sum(e["damage_taken"] for e in episodes) / n
+                             if all(e["damage_taken"] is not None for e in episodes) else None),
+        "deaths": sum(1 for e in episodes if e["final_health"] <= 0),
+        "ammo_outs": sum(1 for e in episodes if e["ammo_min"] == 0),
+        "seeds": [e["seed"] for e in episodes],
     }
     if summary["avg_sys1"] + summary["avg_sys2"] > 0:
         summary["sys2_ratio"] = summary["avg_sys2"] / (summary["avg_sys1"] + summary["avg_sys2"])
@@ -140,6 +149,9 @@ Path(json_path).write_text(json.dumps(result, indent=2, ensure_ascii=False))
 print(json.dumps(result, indent=2, ensure_ascii=False))
 print(f"\n✅ JSON: {json_path}")
 PYEOF
+
+# ログをエピソードごとに集計して episodes[i].diag に追記（B1〜B8・D2〜D3、docs/test_items.md）
+python tools/analyze_log.py "$LOG" --merge "$JSON" || echo "⚠ analyze_log 失敗（レポート本体は有効）" >&2
 
 # 最新レポートへのシンボリックリンク
 ln -sf "$JSON" "$LOGDIR/latest_report.json"

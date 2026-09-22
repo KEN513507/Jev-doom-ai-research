@@ -614,6 +614,12 @@ def main():
         help="視認とみなす最小ラベル幅px（--use-labels時のみ有効）",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="乱数の種。エピソード i は seed+i を使う（条件間で同じ敵の動きにそろえる比較用）",
+    )
+    parser.add_argument(
         "--no-door-fix",
         action="store_true",
         help="修正B（use 失敗検出・ドア待機の早期解除）を無効化（A/B 切り分け用）",
@@ -724,6 +730,9 @@ def main():
     print(f"Jev candidates: {list(filtered_criteria)}")
 
     while episode < 5:  # 5エピソード実行
+        episode_seed = None if args.seed is None else args.seed + episode
+        if episode_seed is not None:
+            game.set_seed(episode_seed)
         game.new_episode()
         print(f"--- Episode {episode} ---")
         tic_counter = 0
@@ -757,6 +766,9 @@ def main():
         _door_depth = None
         # 弾消費の計測（武器が変わったステップの増減は数えない）
         ammo_used = 0
+        damage_taken = 0  # 被ダメージの合計（回復アイテムの影響を受けない主指標）
+        ammo_min = None  # 銃（スロット1=拳・チェーンソー以外）の弾の最小値。0 なら弾切れ
+        melee_steps = 0  # スロット1（拳・チェーンソー）を持っていたステップ数
         attack_steps = 0
         _prev_ammo = None
         _prev_weapon = None
@@ -779,6 +791,7 @@ def main():
                     current_health = int(game_vars[0])
                     if current_health < prev_health:
                         hit_count += 1
+                        damage_taken += prev_health - current_health
                         print(f"!!! HIT #{hit_count} at step={tic_counter}: "
                               f"{prev_health} -> {current_health}")
                         # 被弾後 約1秒間 (35tic) スクリーンショットを保存
@@ -929,6 +942,10 @@ def main():
                 if _prev_ammo is not None and weapon == _prev_weapon and ammo < _prev_ammo:
                     ammo_used += int(_prev_ammo - ammo)
                 _prev_ammo, _prev_weapon = ammo, weapon
+                if int(weapon) == 1:
+                    melee_steps += 1
+                else:
+                    ammo_min = ammo if ammo_min is None else min(ammo_min, ammo)
 
                 # 付け焼き刃: 敵不在の旋回は前進も同時押しし、その場で回り続けず弧を描いて進む。
                 # 敵視認中（照準合わせ）・脱出中・前方が壁（WallAvoider の旋回を含む）は変更しない
@@ -1022,7 +1039,10 @@ def main():
               f"i_exit={i_exit}, "
               f"kills_total={full_map['monsters_total'] if full_map else 0}, "
               f"ammo_used={ammo_used}, attack_steps={attack_steps}, "
-              f"dmg_hits={int(game.get_game_variable(vzd.GameVariable.HITCOUNT))}")
+              f"dmg_hits={int(game.get_game_variable(vzd.GameVariable.HITCOUNT))}, "
+              f"damage_taken={damage_taken}, "
+              f"ammo_min={int(ammo_min) if ammo_min is not None else -1}, melee_steps={melee_steps}, "
+              f"seed={episode_seed if episode_seed is not None else -1}")
         episode += 1
 
     if sys3 is not None:
