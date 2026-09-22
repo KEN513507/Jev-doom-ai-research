@@ -114,6 +114,17 @@ CRITERIA_SETS = {
         "turn_right": "CRITICAL: If enemy_visible=yes, prioritize turning to realign the crosshair onto the enemy from a safer angle before attacking. Prefer this over attacking from a bad angle.",
         "attack": "Fire ONLY if enemy_centered=yes AND health is above 50 AND a safe distance is already maintained. Do NOT attack if it would mean holding position under fire while off-center or at close range.",
     },
+    # tactical_p2 ベースに被弾後の連続被弾対策（strafe/後退で射線を切る）を強化
+    # health は state_text 上 var0 として渡る。strafe キーは MOVE_LEFT/RIGHT を持つシナリオのみ有効（main で除去される）
+    "tactical_p3": {
+        "move_forward": "Advance toward the goal when enemy_visible=no. Do NOT advance into an enemy's line of fire while enemy_visible=yes.",
+        "move_backward": "CRITICAL: If enemy_visible=yes AND health (var0) < 50, retreat immediately to break the enemy's line of fire, whether or not the enemy is centered.",
+        "move_left": "CRITICAL: If enemy_visible=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy), strafe left to dodge incoming fire. Never stand still under fire.",
+        "move_right": "CRITICAL: If enemy_visible=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy), strafe right to dodge incoming fire. Never stand still under fire.",
+        "turn_left": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",
+        "turn_right": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",
+        "attack": "Fire if enemy_centered=yes AND health (var0) >= 50. Below 50, prefer strafing or retreating over attacking. Do NOT attack if no enemy is visible.",
+    },
 }
 
 # criteria ごとの敵検出閾値（red_mean > threshold で enemy_visible=yes）
