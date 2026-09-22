@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 MAX_ITER="${1:-10}"
 CURRENT_CRITERIA="${2:-aggressive_p1}"
+SCENARIO="${3:-deadly_corridor}"
 CONSECUTIVE_FAIL=0
 MAX_CONSECUTIVE_FAIL=3
 
@@ -18,20 +19,19 @@ log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$MASTER"; }
 log "===== Self-Correcting Loop Start ====="
 log "Max iterations: $MAX_ITER"
 log "Initial criteria: $CURRENT_CRITERIA"
+log "Scenario: $SCENARIO"
 
 # 初期実行
 log "[Init] Establishing champion baseline..."
-./tools/run_and_report.sh "$CURRENT_CRITERIA" > "$LOG_DIR/init.log" 2>&1 || true
+./tools/run_and_report.sh "$CURRENT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/init.log" 2>&1 || true
 cp experiments/auto_logs/latest_report.json "$LOG_DIR/champion.json"
 
-CHAMPION_SCORE=$(python -c "
-import json
-d = json.load(open('$LOG_DIR/champion.json'))
-s = d['summary']
-# スコア = hits が少ないほど良い、health が高いほど良い、steps が長いほど減点（過剰な後退・停滞の防止）
-score = -s['avg_hits'] * 100 + s['avg_health'] - s['avg_steps'] * 0.1
-print(f'{score:.2f}')
-")
+# スコア式は tools/score_report.py に一元化（シナリオ対応）
+CHAMPION_SCORE=$(python tools/score_report.py "$LOG_DIR/champion.json")
+if [ "$CHAMPION_SCORE" = "-999999.00" ]; then
+    log "🛑 初期実行が無効（再試行後もクラッシュ・エピソード不足・Jev API 障害）。無人ループを中止"
+    exit 1
+fi
 CHAMPION_CRITERIA="$CURRENT_CRITERIA"
 log "Champion: criteria=$CHAMPION_CRITERIA, score=$CHAMPION_SCORE"
 
@@ -78,8 +78,8 @@ $(cat "$LOG_DIR/iter${i}_next.md")
 【絶対制約】
 - Git操作禁止
 - 既存criteriaは削除しない
-- should_force_attack() の中身は変更しない（ChaingunGuy特例を保持）
 - 新しい criteria の追加のみ
+- System 1（should_force_attack）の条件・閾値は変更しない
 - 完了したら「DONE」と出力"
 
     CLAUDE_RC=0
@@ -114,19 +114,10 @@ $(cat "$LOG_DIR/iter${i}_next.md")
     
     # --- Step 3: 実行 ---
     log "[3/4] Running $NEXT_CRITERIA..."
-    ./tools/run_and_report.sh "$NEXT_CRITERIA" > "$LOG_DIR/iter${i}_run.log" 2>&1 || true
+    ./tools/run_and_report.sh "$NEXT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/iter${i}_run.log" 2>&1 || true
     cp experiments/auto_logs/latest_report.json "$LOG_DIR/iter${i}_result.json" 2>/dev/null || true
-    
-    NEW_SCORE=$(python -c "
-import json
-try:
-    d = json.load(open('$LOG_DIR/iter${i}_result.json'))
-    s = d['summary']
-    score = -s['avg_hits'] * 100 + s['avg_health'] - s['avg_steps'] * 0.1
-    print(f'{score:.2f}')
-except Exception:
-    print('-999999')
-")
+
+    NEW_SCORE=$(python tools/score_report.py "$LOG_DIR/iter${i}_result.json")
     
     log "  New score: $NEW_SCORE (Champion: $CHAMPION_SCORE)"
     

@@ -63,7 +63,7 @@ class TestSystem3DummyMode(unittest.TestCase):
     def test_front_blocked_issues_local_order(self):
         self.core.update_state({"front_blocked": True}, [TRIGGER_FRONT_BLOCKED])
         self.assertTrue(self.core.step())
-        self.assertIn("'use'", self.core.get_current_instruction())
+        self.assertIn("turn", self.core.get_current_instruction())
 
     def test_order_expires_after_ttl(self):
         self.core.update_state({"front_blocked": True}, [TRIGGER_FRONT_BLOCKED])

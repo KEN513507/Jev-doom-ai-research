@@ -7,6 +7,13 @@ import math
 import re
 from collections import deque
 
+import numpy as np
+
+try:
+    from train.scenarios import action_components
+except ImportError:
+    from scenarios import action_components
+
 # 画面解像度（この値に依存してスライスが決まる）
 USE_RESOLUTION = "RES_160X120"
 
@@ -215,7 +222,7 @@ class ForwardBlockDetector:
 
     def update(self, position, last_action) -> bool:
         """position: 現在の (x, y)。last_action: 前回の観測から今回までに実行した行動。"""
-        if last_action != "move_forward":
+        if "MOVE_FORWARD" not in action_components(last_action):
             self.positions.clear()
         self.positions.append(position)
         if len(self.positions) <= self.window:
@@ -224,27 +231,48 @@ class ForwardBlockDetector:
         return math.hypot(x1 - x0, y1 - y0) < self.max_distance
 
 
-# wall_ahead 判定：front_blocked 中に use を1回試し、同じ地点（WALL_PROBE_RADIUS 単位以内）で
-# 再び front_blocked になればドアではなく壁とみなす。その地点を離れるまで判定を保持し、use を繰り返させない。
-WALL_PROBE_RADIUS = 32.0
+# 壁回避（ゲームAI定番の「前方レイの距離で操舵」を depth_buffer の目線の高さの帯で行う）。
+# 実測（160x120, freedoom2 map01）: 深度値 ≈ 壁までの距離/7、接触で1、遠方は63で飽和。
+# 7 ≈ 壁の手前44単位 = use が届く距離（USERANGE 64 − 体の半径 16）。
+WALL_NEAR_DEPTH = 7
+DOOR_WAIT_STEPS = 6  # use 後にドアが目線の高さまで開くのを待つ判断ステップ数（24tic）
+USE_SPOT_RADIUS = 32.0
 
 
-class WallProbe:
-    def __init__(self, radius: float = WALL_PROBE_RADIUS):
-        self.radius = radius
-        self.use_tried_at = None
-        self._prev_blocked = False
+class WallAvoider:
+    """前進はドア操作・旋回、複合横移動は移動側の近い壁で射撃のみへ切替。"""
 
-    def update(self, position, last_action, front_blocked: bool) -> bool:
-        """last_action: 前回の観測から今回までに実行した行動。戻り値: wall_ahead"""
-        if self.use_tried_at is not None:
-            (x0, y0), (x1, y1) = self.use_tried_at, position
-            if math.hypot(x1 - x0, y1 - y0) >= self.radius:
-                self.use_tried_at = None
-        if last_action == "use" and self._prev_blocked:
-            self.use_tried_at = position
-        self._prev_blocked = front_blocked
-        return front_blocked and self.use_tried_at is not None
+    def __init__(self):
+        self.use_pos = None
+        self.wait = 0
+        self.turn = None
+
+    def filter(self, choice, depth, position, front_blocked=False) -> str:
+        components = action_components(choice)
+        h, w = depth.shape
+        band = depth[h // 2 - 3:h // 2 + 3]
+        # 前方カメラの左右端による保守的な検出。真横の空間を保証するものではない。
+        # 前方のドア待機中でも横移動側の壁をチェックする。
+        if "ATTACK" in components and ("MOVE_LEFT" in components or "MOVE_RIGHT" in components):
+            side = band[:, :w // 3] if "MOVE_LEFT" in components else band[:, w * 2 // 3:]
+            if np.median(side) <= WALL_NEAR_DEPTH:
+                return "attack"
+            return choice
+        if self.wait > 0:
+            self.wait -= 1
+            return choice
+        if not front_blocked and np.median(band[:, w * 2 // 5:w * 3 // 5]) > WALL_NEAR_DEPTH:
+            self.turn = None
+            return choice
+        if "MOVE_FORWARD" not in components:
+            return choice
+        if self.use_pos is None or math.dist(position, self.use_pos) >= USE_SPOT_RADIUS:
+            self.use_pos = position
+            self.wait = DOOR_WAIT_STEPS
+            return "use"
+        if self.turn is None:  # 角で左右に迷わないよう、開けるまで同じ向きに回る
+            self.turn = "turn_left" if band[:, :w // 3].mean() > band[:, w * 2 // 3:].mean() else "turn_right"
+        return self.turn
 
 
 # area_stagnation 判定：直近 STAGNATION_WINDOW 判断ステップ（frame_skip=4 で 176tic ≈ ゲーム内5秒）の
@@ -271,12 +299,40 @@ class AreaStagnationDetector:
         return False
 
 
-# 鍵に関する通知（取得・鍵付きドア）。Freedoom 実測: "Blue passcard secured!"
+# 鍵に関する通知。Freedoom 実測: "Blue passcard secured!"
 KEY_EVENT_PATTERN = re.compile(r"passcard|keycard|skull ?key|\bkeys?\b", re.IGNORECASE)
+# 取得動詞ガード: 鍵付きドアの "You need a blue key ..." を取得と誤判定しないため
+# （freedoom2 MAP01 は鍵0個だが keys=1 が記録されていた）。"secured" は Freedoom の取得文言
+KEY_ACQUIRE_PATTERN = re.compile(r"picked up|you got|secured", re.IGNORECASE)
+KEY_REQUIRED_PATTERN = re.compile(r"you need", re.IGNORECASE)
+
+
+def coerce_notifications(buf) -> str:
+    """notifications_buffer（str/bytes/None）を str に正規化する。
+
+    ViZDoom の notifications_buffer は str で返る場合があり、
+    bytes 決め打ちの .decode() は AttributeError で空文字化する。
+    """
+    if buf is None:
+        return ""
+    if isinstance(buf, bytes):
+        try:
+            return buf.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+    try:
+        return str(buf)
+    except Exception:
+        return ""
 
 
 def extract_key_events(notifications: str | None) -> list[str]:
-    """notifications_buffer から鍵関連の行だけを返す（体力ボーナス等の取得通知は除外）"""
+    """notifications_buffer から鍵取得の行だけを返す（体力ボーナス等・鍵要求メッセージは除外）"""
     if not notifications:
         return []
-    return [line.strip() for line in notifications.splitlines() if KEY_EVENT_PATTERN.search(line)]
+    return [
+        line.strip() for line in notifications.splitlines()
+        if KEY_EVENT_PATTERN.search(line)
+        and KEY_ACQUIRE_PATTERN.search(line)
+        and not KEY_REQUIRED_PATTERN.search(line)
+    ]

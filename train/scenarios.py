@@ -1,7 +1,7 @@
 """ViZDoomシナリオごとのボタン・criteria定義。
 
 各シナリオの .cfg ファイルに定義された available_buttons と
-criteria のキーを一致させる必要がある。
+各アクションの構成ボタンがすべて利用可能である必要がある。
 """
 
 # シナリオ名 → 利用可能なボタン名（ViZDoomの .cfg に合わせる）
@@ -31,6 +31,42 @@ SCENARIO_BUTTONS = {
         "TURN_LEFT", "TURN_RIGHT", "USE",
     ],
 }
+
+# 単独・複合の唯一の定義源。シナリオ別の辞書はこの定義から生成する。
+ACTION_DEFINITIONS = {
+    button.lower(): button
+    for buttons in SCENARIO_BUTTONS.values()
+    for button in buttons
+}
+ACTION_DEFINITIONS.update({
+    "strafe_attack_left": ["MOVE_LEFT", "ATTACK"],
+    "strafe_attack_right": ["MOVE_RIGHT", "ATTACK"],
+    "advance_attack": ["MOVE_FORWARD", "ATTACK"],
+})
+
+
+def action_components(choice):
+    target = ACTION_DEFINITIONS.get(choice, [])
+    return (target,) if isinstance(target, str) else tuple(target)
+
+
+def get_action_buttons(scenario_name):
+    available = set(SCENARIO_BUTTONS[scenario_name])
+    return {
+        name: target.copy() if isinstance(target, list) else target
+        for name, target in ACTION_DEFINITIONS.items()
+        if set(action_components(name)) <= available
+    }
+
+
+def build_action_vector(choice, button_names, actions):
+    """実行時辞書と実機ボタンを検証し、複合を同時押しにする。"""
+    target = actions[choice]
+    components = [target] if isinstance(target, str) else target
+    missing = set(components) - set(button_names)
+    if missing:
+        raise ValueError(f"Unavailable buttons for {choice}: {sorted(missing)}")
+    return [int(button in components) for button in button_names]
 
 
 # 同梱 .cfg 名とシナリオ名が一致しないフルマップ用の設定
@@ -105,6 +141,20 @@ SCENARIO_CRITERIA = {
         "use": "Press USE to open a door or activate a switch directly in front.",
     },
 }
+
+
+DEFAULT_CRITERIA = {
+    **SCENARIO_CRITERIA["full_map"],
+    "strafe_attack_left": "Strafe left AND fire simultaneously only when enemy_centered=yes and dodging is needed.",
+    "strafe_attack_right": "Strafe right AND fire simultaneously only when enemy_centered=yes and dodging is needed.",
+    "advance_attack": "Advance AND fire simultaneously only when enemy_centered=yes and the path ahead is clear.",
+}
+
+for _scenario, _criteria in SCENARIO_CRITERIA.items():
+    SCENARIO_CRITERIA[_scenario] = {
+        name: _criteria.get(name, DEFAULT_CRITERIA[name])
+        for name in get_action_buttons(_scenario)
+    }
 
 
 def get_scenario_config(scenario_name: str) -> tuple[list[str], dict[str, str]]:

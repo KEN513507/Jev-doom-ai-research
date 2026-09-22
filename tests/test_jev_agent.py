@@ -14,10 +14,13 @@ from train.state_utils import (
     ENEMY_RED_THRESHOLD,
     ForwardBlockDetector,
     SLICE_CONFIG,
+    DOOR_WAIT_STEPS,
     USE_RESOLUTION,
+    WallAvoider,
     build_state_text,
     compute_red_metrics,
     detect_enemy_from_labels,
+    detect_items_from_labels,
     get_slice,
 )
 from train.jev_agent import (
@@ -322,19 +325,23 @@ class TestLabelsDetection(unittest.TestCase):
 
 class TestFullMap(unittest.TestCase):
     def test_full_map_has_strafe_buttons(self):
-        from train.scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA
+        from train.scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA, get_action_buttons
 
         buttons = SCENARIO_BUTTONS["full_map"]
         self.assertIn("MOVE_LEFT", buttons)
         self.assertIn("MOVE_RIGHT", buttons)
-        self.assertEqual(set(SCENARIO_CRITERIA["full_map"]), {b.lower() for b in buttons})
+        self.assertEqual(set(SCENARIO_CRITERIA["full_map"]), set(get_action_buttons("full_map")))
         self.assertIn("full_map", FULL_MAP_SCENARIOS)
 
     def test_tactical_peeking_keys_fit_full_map(self):
         from train.scenarios import SCENARIO_BUTTONS
 
         keys = set(CRITERIA_SETS["tactical_peeking"])
-        self.assertLessEqual(keys, {b.lower() for b in SCENARIO_BUTTONS["full_map"]})
+        # 複合アクション（値が list）は構成ボタンがすべてシナリオにあればよい
+        for k in keys:
+            target = ACTION_BUTTONS.get(k, k.upper())
+            buttons = target if isinstance(target, list) else [target]
+            self.assertLessEqual(set(buttons), set(SCENARIO_BUTTONS["full_map"]), k)
         self.assertIn("move_left", keys)
         self.assertIn("move_right", keys)
         self.assertIn("use", keys)
@@ -347,10 +354,11 @@ class TestFullMap(unittest.TestCase):
         self.assertTrue(info["enemy_visible"])
         self.assertEqual(info["enemy_names"], ["DoomImp"])
 
-    def test_tactical_peeking_use_gated_by_front_blocked(self):
+    def test_tactical_peeking_criteria(self):
         crit = CRITERIA_SETS["tactical_peeking"]
         self.assertIn("front_blocked=yes", crit["use"])
-        self.assertIn("front_blocked=yes", crit["move_forward"])
+        self.assertIn("item_visible=yes", crit["move_forward"])
+        self.assertIn("Fire ONLY when enemy_centered=yes", crit["attack"])
 
 
 class TestFrontBlocked(unittest.TestCase):
@@ -396,6 +404,62 @@ class TestFrontBlocked(unittest.TestCase):
         )
         self.assertEqual((choice, source), ("use", "system2"))
         self.assertIn("front_blocked=yes", seen[0])
+
+
+def _depth(center, left=63, right=63, h=120, w=160):
+    import numpy as np
+
+    d = np.full((h, w), 63, dtype=np.uint8)
+    d[:, : w // 3] = left
+    d[:, w * 2 // 3:] = right
+    d[:, w * 2 // 5: w * 3 // 5] = center
+    return d
+
+
+class TestWallAvoider(unittest.TestCase):
+    def test_clear_front_passes_through(self):
+        self.assertEqual(WallAvoider().filter("move_forward", _depth(63), (0, 0)), "move_forward")
+
+    def test_use_once_then_turn_to_open_side(self):
+        av = WallAvoider()
+        near = _depth(3, left=40, right=10)
+        self.assertEqual(av.filter("move_forward", near, (0, 0)), "use")
+        for _ in range(DOOR_WAIT_STEPS):  # ドアが開くのを待つ間は Jev の選択どおり
+            self.assertEqual(av.filter("move_forward", near, (0, 0)), "move_forward")
+        self.assertEqual(av.filter("move_forward", near, (0, 0)), "turn_left")
+        # 開けるまで同じ向きに回り続ける（左右の開け具合が入れ替わっても迷わない）
+        self.assertEqual(av.filter("move_forward", _depth(3, left=10, right=40), (0, 0)), "turn_left")
+        self.assertEqual(av.filter("move_forward", _depth(63), (0, 0)), "move_forward")
+
+    def test_only_forward_is_overridden(self):
+        self.assertEqual(WallAvoider().filter("attack", _depth(3), (0, 0)), "attack")
+
+    def test_new_spot_gets_its_own_use(self):
+        av = WallAvoider()
+        av.filter("move_forward", _depth(3), (0, 0))
+        av.wait = 0
+        self.assertEqual(av.filter("move_forward", _depth(3), (100, 0)), "use")
+
+    def test_front_blocked_counts_as_near(self):
+        # 目線の帯に映らない低い障害物でも、前進できていなければ回避する
+        self.assertEqual(WallAvoider().filter("move_forward", _depth(63), (0, 0), front_blocked=True), "use")
+
+
+class TestItemDetection(unittest.TestCase):
+    def test_centered_item_detected_and_decoration_ignored(self):
+        state = _fake_state_with_labels([
+            _fake_label("Stimpack", x=74, width=12),   # 中心80 → centered
+            _fake_label("TorchTree", x=10, width=10),  # 装飾は対象外
+        ])
+        info = detect_items_from_labels(state)
+        self.assertEqual(info, {"item_visible": True, "item_centered": True, "item_names": ["Stimpack"]})
+
+    def test_state_text_items_only_when_requested(self):
+        state = _fake_state_with_labels([_fake_label("Clip", x=0, width=10)])
+        with_items, _, _ = state_to_text(state, [100], use_labels=True, report_items=True)
+        without, _, _ = state_to_text(state, [100], use_labels=True)
+        self.assertIn("item_visible=yes, item_centered=no, item_types=Clip", with_items)
+        self.assertNotIn("item_", without)
 
 
 class _FakeGame:

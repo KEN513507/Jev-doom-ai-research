@@ -1,0 +1,2 @@
+[TIMEOUT] Episode 0 - タイムアウト（生存）。5秒待機
+Episode 0 done: hits=2, final_health=85, steps=2104, sys1=1, sys2=262, kills=4, visited_cells=24, max_distance=1397, keys=0, dead_ends=1, i_exit=0

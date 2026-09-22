@@ -31,7 +31,8 @@ You are called only when a trigger fires:
 - area_stagnation: the agent has stayed within a small area for about 5 seconds.
 - key_event: an in-game message about a key (picked up, or a locked door needs one).
 Jev's available actions: move_forward, move_left, move_right, turn_left, turn_right, attack, use.
-If front_blocked is true, the highest priority is to order 'use' (open a door) or a turn (it is a wall).
+A reflex already stops the agent before walls, presses 'use' once at each blocked spot, and turns away.
+So order where to go next (e.g. turn around, take another passage), not 'use'.
 Base the order only on the given state. Reply with JSON only."""
 
 RESPONSE_SCHEMA = {
@@ -52,7 +53,7 @@ def local_order(triggers, state) -> str:
         events = "; ".join(state.get("key_events") or []) or "key message"
         return f"Key event ({events}): find the door of the matching color and go through it."
     if TRIGGER_FRONT_BLOCKED in triggers:
-        return "If front_blocked=yes, select 'use' to open a door; if it stays blocked, turn to find another way."
+        return "The way ahead is blocked: turn toward an open direction and explore another passage."
     return "You have stayed in the same small area too long: turn around and head for an unexplored passage."
 
 

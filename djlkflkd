@@ -1,0 +1,290 @@
+[1mdiff --git a/train/jev_agent.py b/train/jev_agent.py[m
+[1mindex 512fed9..0a5550c 100644[m
+[1m--- a/train/jev_agent.py[m
+[1m+++ b/train/jev_agent.py[m
+[36m@@ -2,6 +2,7 @@[m
+ [m
+ API key is read from TYPESAFE_API_KEY environment variable only.[m
+ """[m
+[32m+[m[32mimport math[m
+ import os[m
+ import time[m
+ from collections import deque[m
+[36m@@ -19,13 +20,18 @@[m [mexcept ImportError:[m
+     from scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA[m
+ [m
+ [m
+[32m+[m[32mtry:[m
+[32m+[m[32m    from train.tactical_movement import TacticalController, TacticalState, StagnationDetector[m
+[32m+[m[32mexcept ImportError:[m
+[32m+[m[32m    from tactical_movement import TacticalController, TacticalState, StagnationDetector[m
+[32m+[m
+ try:[m
+     from train.state_utils import ([m
+         ENEMY_RED_THRESHOLD,[m
+         MIN_ENEMY_WIDTH,[m
+         AreaStagnationDetector,[m
+         ForwardBlockDetector,[m
+[31m-        WallProbe,[m
+[32m+[m[32m        WallAvoider,[m
+         compute_red_metrics,[m
+         build_state_text,[m
+         detect_enemy_from_labels,[m
+[36m@@ -44,7 +50,7 @@[m [mexcept ImportError:  # python train/jev_agent.py 直接実行時[m
+         MIN_ENEMY_WIDTH,[m
+         AreaStagnationDetector,[m
+         ForwardBlockDetector,[m
+[31m-        WallProbe,[m
+[32m+[m[32m        WallAvoider,[m
+         compute_red_metrics,[m
+         build_state_text,[m
+         detect_enemy_from_labels,[m
+[36m@@ -59,6 +65,8 @@[m [mexcept ImportError:  # python train/jev_agent.py 直接実行時[m
+     )[m
+ [m
+ [m
+[32m+[m[32mVISIT_GRID = 128  # 探索量（visited_cells）の格子サイズ（マップ単位）[m
+[32m+[m
+ JEV_API_URL = os.environ.get("JEV_API_URL", "https://api.typesafe.ai/v1/systemone")[m
+ JEV_MODEL = "jev-latest"[m
+ JEV_TIMEOUT = float(os.environ.get("JEV_TIMEOUT", "5.0"))[m
+[36m@@ -154,15 +162,15 @@[m [mCRITERIA_SETS = {[m
+         "turn_right": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",[m
+         "attack": "Fire if enemy_centered=yes AND health (var0) >= 50. Below 50, prefer strafing or retreating over attacking. Do NOT attack if no enemy is visible.",[m
+     },[m
+[31m-    # full_map（遮蔽物・角あり）用：壁に張り付かない。ドア（use 1回）とアイテム以外では即座に旋回・移動する[m
+[32m+[m[32m    # full_map（遮蔽物・角あり）用。壁の手前での停止・ドアの use・旋回は反射層（WallAvoider）が担当[m
+     "tactical_peeking": {[m
+[31m-        "move_forward": "Advance only when front_blocked=no. If item_visible=yes and item_centered=yes, move forward to pick it up. Never keep pushing into a wall.",[m
+[31m-        "use": "Select 'use' ONLY when front_blocked=yes and wall_ahead is not reported (it may be a door). Never select 'use' when wall_ahead=yes.",[m
+[31m-        "move_left": "Strafe left to slide away from a wall (wall_ahead=yes) or to dodge enemy fire.",[m
+[31m-        "move_right": "Strafe right to slide away from a wall (wall_ahead=yes) or to dodge enemy fire.",[m
+[31m-        "turn_left": "CRITICAL: If wall_ahead=yes, turn immediately to face an open direction. Also turn to center an off-center enemy or item.",[m
+[31m-        "turn_right": "CRITICAL: If wall_ahead=yes, turn immediately to face an open direction. Also turn to center an off-center enemy or item.",[m
+[31m-        "attack": "Fire ONLY when enemy_centered=yes. If enemy_visible=yes but enemy_centered=no, turn_left or turn_right to align first.",[m
+[32m+[m[32m        "move_forward": "Advance to explore when no enemy needs attention. If item_visible=yes and item_centered=yes, move forward to pick it up.",[m
+[32m+[m[32m        "use": "Select 'use' only when front_blocked=yes (a door may be ahead).",[m
+[32m+[m[32m        "move_left": "Strafe left to dodge enemy fire or peek around a corner.",[m
+[32m+[m[32m        "move_right": "Strafe right to dodge enemy fire or peek around a corner.",[m
+[32m+[m[32m        "turn_left": "Turn to center an off-center enemy or item, or to face an unexplored direction.",[m
+[32m+[m[32m        "turn_right": "Turn to center an off-center enemy or item, or to face an unexplored direction.",[m
+[32m+[m[32m        "attack": "Fire if enemy_visible=yes AND enemy_centered=yes. ALSO fire immediately if enemy_visible=yes AND health (var0) < 50, even if not centered. When health is low, attack takes priority over alignment.",[m
+     },[m
+ }[m
+ [m
+[36m@@ -258,7 +266,6 @@[m [mdef state_to_text([m
+     use_labels: bool = False,[m
+     min_enemy_width: float = 0.0,[m
+     front_blocked: bool | None = None,[m
+[31m-    wall_ahead: bool = False,[m
+     report_items: bool = False,[m
+ ) -> tuple[str, float, bool]:[m
+     """ViZDoom の状態を Jev が理解できるテキストに変換する。[m
+[36m@@ -290,8 +297,6 @@[m [mdef state_to_text([m
+                 extra_parts.append(f"item_types={','.join(items['item_names'])}")[m
+     if front_blocked is not None:[m
+         extra_parts.append(f"front_blocked={'yes' if front_blocked else 'no'}")[m
+[31m-        if front_blocked and wall_ahead:[m
+[31m-            extra_parts.append("wall_ahead=yes")[m
+     text = build_state_text(game_vars, red_mean, enemy_visible)[m
+     if extra_parts:[m
+         text = f"{text} {', '.join(extra_parts)}"[m
+[36m@@ -319,6 +324,10 @@[m [mdef should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRES[m
+     if "ChaingunGuy" in enemy_names:[m
+         return True[m
+ [m
+[32m+[m[32m    # 条件3（緊急）: 敵が見えていて体力低下中 → 中央判定を無視して攻撃[m
+[32m+[m[32m    if health < 50.0:[m
+[32m+[m[32m        return True[m
+[32m+[m
+     # 条件2: その他の敵は中央かつ至近距離のみ[m
+     if not label_info.get("enemy_centered"):[m
+         return False[m
+[36m@@ -332,7 +341,7 @@[m [mdef should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRES[m
+ [m
+ [m
+ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True,[m
+[31m-                   front_blocked=None, wall_ahead=False, report_items=False):[m
+[32m+[m[32m                   front_blocked=None, report_items=False, reflex_hint=""):[m
+     """次の行動を決定する。[m
+ [m
+     decide: state_text -> Jev API応答dict（System2）。[m
+[36m@@ -344,12 +353,16 @@[m [mdef resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all[m
+         if use_labels[m
+         else None[m
+     )[m
+[31m-    if allow_system1 and should_force_attack(label_info):[m
+[32m+[m[32m    # health は game_vars[0] から取得[m
+[32m+[m[32m    _health = game_vars[0] if game_vars else 100.0[m
+[32m+[m[32m    if allow_system1 and should_force_attack(label_info, health=float(_health)):[m
+         return "attack", "system1", label_info[m
+     state_text, red_mean, enemy_visible = state_to_text([m
+         state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width,[m
+[31m-        front_blocked=front_blocked, wall_ahead=wall_ahead, report_items=report_items,[m
+[32m+[m[32m        front_blocked=front_blocked, report_items=report_items,[m
+     )[m
+[32m+[m[32m    if reflex_hint:[m
+[32m+[m[32m        state_text = state_text + reflex_hint[m
+     choice, probs = extract_choice_and_probs(decide(state_text))[m
+     return choice, "system2", {[m
+         "state_text": state_text,[m
+[36m@@ -455,6 +468,11 @@[m [mdef main():[m
+         choices=sorted(SCENARIO_BUTTONS.keys()),[m
+         help="ViZDoomシナリオ名（デフォルト: deadly_corridor）",[m
+     )[m
+[32m+[m[32m    parser.add_argument([m
+[32m+[m[32m        "--tactical",[m
+[32m+[m[32m        action="store_true",[m
+[32m+[m[32m        help="特殊部隊型戦術制御を有効化（full_map推奨）",[m
+[32m+[m[32m    )[m
+     parser.add_argument([m
+         "--min-width",[m
+         type=float,[m
+[36m@@ -466,6 +484,7 @@[m [mdef main():[m
+         action="store_true",[m
+         help="ゲーム音を有効化（観戦時のみ推奨。長時間実験では指定しない）",[m
+     )[m
+[32m+[m[32m    parser.add_argument("--episodes", type=int, default=5, help="実行エピソード数")[m
+     parser.add_argument([m
+         "--system3",[m
+         action="store_true",[m
+[36m@@ -509,7 +528,7 @@[m [mdef main():[m
+     game.set_window_visible(True)  # ウィンドウ表示（リアルタイム可視化が要件のためTrueを維持）[m
+     game.set_sound_enabled(args.sound)  # --sound 指定時のみ音声オン（initより前）[m
+     game.set_screen_resolution(vzd.ScreenResolution.RES_160X120)[m
+[31m-    game.set_depth_buffer_enabled(False)[m
+[32m+[m[32m    game.set_depth_buffer_enabled("use" in ACTION_BUTTONS)  # 壁回避（WallAvoider）用[m
+     game.set_labels_buffer_enabled(args.use_labels)  # labels検出を使う場合のみ有効化[m
+     game.set_automap_buffer_enabled(False)[m
+     if args.system3:[m
+[36m@@ -548,7 +567,7 @@[m [mdef main():[m
+         if k in ACTION_BUTTONS[m
+     }[m
+ [m
+[31m-    while episode < 5:  # 5エピソード実行[m
+[32m+[m[32m    while episode < args.episodes:[m
+         game.new_episode()[m
+         print(f"--- Episode {episode} ---")[m
+         tic_counter = 0[m
+[36m@@ -562,10 +581,17 @@[m [mdef main():[m
+         prev_system1 = False[m
+         last_kills = 0[m
+         # USE を持つシナリオのみ front_blocked を state_text に載せる（他シナリオの入力は不変）[m
+[32m+[m[32m        # アイテム情報・壁回避も同じ条件（full_map のみ）[m
+         block_detector = ForwardBlockDetector() if "use" in ACTION_BUTTONS else None[m
+[32m+[m[32m        wall_avoider = WallAvoider() if block_detector is not None else None[m
+         front_blocked = None[m
+[32m+[m[32m        tactical = TacticalController() if args.tactical else None[m
+[32m+[m[32m        stagnation = StagnationDetector() if args.tactical else None[m
+         stagnation_detector = AreaStagnationDetector() if sys3 is not None else None[m
+         order = None[m
+[32m+[m[32m        visited_cells = set()[m
+[32m+[m[32m        start_position = None[m
+[32m+[m[32m        max_distance = 0.0[m
+ [m
+         while not game.is_episode_finished():[m
+             # 判断フレームのみ get_state() を呼ぶ[m
+[36m@@ -598,6 +624,10 @@[m [mdef main():[m
+                     )[m
+                 position = (game.get_game_variable(vzd.GameVariable.POSITION_X),[m
+                             game.get_game_variable(vzd.GameVariable.POSITION_Y))[m
+[32m+[m[32m                visited_cells.add((int(position[0]) // VISIT_GRID, int(position[1]) // VISIT_GRID))[m
+[32m+[m[32m                if start_position is None:[m
+[32m+[m[32m                    start_position = position[m
+[32m+[m[32m                max_distance = max(max_distance, math.dist(position, start_position))[m
+                 # この時点の choice は前回の判断で実行済みの行動[m
+                 if block_detector is not None:[m
+                     front_blocked = block_detector.update(position, choice)[m
+[36m@@ -628,9 +658,48 @@[m [mdef main():[m
+                     order = sys3.get_current_instruction()[m
+ [m
+                 try:[m
+[31m-                    choice, source, info = resolve_action([m
+[31m-                        state,[m
+[31m-                        game_vars,[m
+[32m+[m[32m                    # ─── 戦術層（TacticalController）───[m
+[32m+[m[32m                    tactical_action = None[m
+[32m+[m[32m                    if tactical is not None:[m
+[32m+[m[32m                        # label_info は use_labels ブロックでしか定義されないため、安全に取得[m
+[32m+[m[32m                        # COMBAT（Jev に委ねる）への遷移用。--system3 の有無に関係なくこのステップのラベルから判定[m
+[32m+[m[32m                        _enemy_visible = args.use_labels and detect_enemy_from_labels([m
+[32m+[m[32m                            state, min_width=args.min_width[m
+[32m+[m[32m                        )["enemy_visible"][m
+[32m+[m[32m                        # order は System 3 の指示（Jev の instructions 用）なので別名で受ける[m
+[32m+[m[32m                        tactical_order = tactical.update([m
+[32m+[m[32m                            enemy_visible=_enemy_visible,[m
+[32m+[m[32m                            front_blocked=bool(front_blocked) if front_blocked else False,[m
+[32m+[m[32m                            position=position,[m
+[32m+[m[32m                            current_tic=tic_counter,[m
+[32m+[m[32m                        )[m
+[32m+[m[32m                        # 滞留検出 → Gemini強制介入[m
+[32m+[m[32m                        if stagnation is not None and stagnation.update(position, tic_counter):[m
+[32m+[m[32m                            print(f"step={tic_counter} [STAGNATION] 検出！強制介入")[m
+[32m+[m[32m                            tactical_order = {[m
+[32m+[m[32m                                "action": stagnation.get_forced_action(),[m
+[32m+[m[32m                                "reason": "Stagnation break (forced)",[m
+[32m+[m[32m                                "priority": "critical",[m
+[32m+[m[32m                            }[m
+[32m+[m[32m                        if tactical_order["priority"] in ("high", "critical"):[m
+[32m+[m[32m                            tactical_action = tactical_order["action"][m
+[32m+[m[32m                            print(f"step={tic_counter} [Tactical] {tactical_action} | {tactical_order['reason']}")[m
+[32m+[m[41m                    [m
+[32m+[m[32m                    if tactical_action:[m
+[32m+[m[32m                        choice = tactical_action[m
+[32m+[m[32m                        source = "tactical"[m
+[32m+[m[32m                        info = {"state_text": "(tactical override)", "red_mean": 0.0, "enemy_visible": False, "probs": {}}[m
+[32m+[m[32m                    else:[m
+[32m+[m[32m                        # 修正2: Reflex履歴を state_text に注入[m
+[32m+[m[32m                        _reflex_hint = ""[m
+[32m+[m[32m                        if tactical is not None and tactical.last_reflex_direction:[m
+[32m+[m[32m                            _age = tic_counter - tactical.last_reflex_tic[m
+[32m+[m[32m                            if _age < 20:  # 直近20tic以内のみ[m
+[32m+[m[32m                                _reflex_hint = (f" [recent_reflex=turned_{tactical.last_reflex_direction}"[m
+[32m+[m[32m                                                f"_due_to_wall_{_age}_tic_ago] [do_not_reverse_it]")[m
+[32m+[m[32m                        choice, source, info = resolve_action([m
+[32m+[m[32m                            state,[m
+[32m+[m[32m                            game_vars,[m
+                         use_labels=args.use_labels,[m
+                         min_enemy_width=args.min_width if args.use_labels else 0.0,[m
+                         decide=lambda text: get_jev_decision([m
+[36m@@ -639,12 +708,16 @@[m [mdef main():[m
+                         ),[m
+                         allow_system1=not prev_system1,[m
+                         front_blocked=front_blocked,[m
+[32m+[m[32m                        report_items=block_detector is not None,[m
+[32m+[m[32m                        reflex_hint=_reflex_hint,[m
+                     )[m
+                     prev_system1 = (source == "system1")[m
+                     if source == "system1":[m
+                         system1_count += 1[m
+                         print(f"step={tic_counter} [System1] FORCED attack "[m
+                               f"(centered, width={info['nearest_enemy_width']:.0f})")[m
+[32m+[m[32m                    elif source == "tactical":[m
+[32m+[m[32m                        pass  # 既に [Tactical] で出力済み[m
+                     else:[m
+                         system2_count += 1[m
+                         viz.log(info["probs"], last_reward, health)[m
+[36m@@ -657,6 +730,13 @@[m [mdef main():[m
+                 except Exception as e:[m
+                     print(f"[skip] {e}")[m
+ [m
+[32m+[m[32m                # 反射層：壁に向かう前進を止める（ドアは地点ごとに use 1回）[m
+[32m+[m[32m                if wall_avoider is not None:[m
+[32m+[m[32m                    steered = wall_avoider.filter(choice, state.depth_buffer, position, front_blocked)[m
+[32m+[m[32m                    if steered != choice:[m
+[32m+[m[32m                        print(f"step={tic_counter} [Reflex] {choice} -> {steered} (wall ahead)")[m
+[32m+[m[32m                        choice = steered[m
+[32m+[m
+             # ボタンベクトルを再利用[m
+             for i in range(n_buttons):[m
+                 action_vec[i] = 0[m
+[36m@@ -674,7 +754,8 @@[m [mdef main():[m
+         print(f"Episode {episode} done: hits={hit_count}, "[m
+               f"final_health={prev_health}, steps={tic_counter}, "[m
+               f"sys1={system1_count}, sys2={system2_count}, "[m
+[31m-              f"kills={last_kills}")[m
+[32m+[m[32m              f"kills={last_kills}, visited_cells={len(visited_cells)}, "[m
+[32m+[m[32m              f"max_distance={max_distance:.0f}")[m
+         episode += 1[m
+ [m
+     if sys3 is not None:[m

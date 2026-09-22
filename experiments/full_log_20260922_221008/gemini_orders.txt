@@ -1,0 +1,326 @@
+[System 3] triggers=['area_stagnation'] -> Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+    order(System3): Engage and eliminate the three visible enemies while strafing to break stagnation.
+[System 3] triggers=['front_blocked'] -> Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+[System 3] triggers=['front_blocked'] -> Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore alternative passages to find an open route forward.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and explore an alternate corridor or passage.
+[System 3] triggers=['area_stagnation'] -> Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and explore an alternate corridor or passage.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+    order(System3): Turn around and sprint down an unexplored corridor to leave this stagnant area.
+[System 3] triggers=['front_blocked'] -> Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+[System 3] triggers=['area_stagnation'] -> Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and explore the opposite path or corridor to find an open route.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+[System 3] triggers=['front_blocked'] -> Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and move forward into a new hallway to find unexplored areas.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+[System 3] triggers=['front_blocked'] -> Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and follow the alternate corridor to locate an open path.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+    order(System3): Turn around and explore an alternate corridor or opening.
+[System 3] triggers=['front_blocked'] -> Turn right and move down the open hallway to explore a new path.
+    order(System3): Turn right and move down the open hallway to explore a new path.
+    order(System3): Turn right and move down the open hallway to explore a new path.
+    order(System3): Turn right and move down the open hallway to explore a new path.
+    order(System3): Turn right and move down the open hallway to explore a new path.
+    order(System3): Turn right and move down the open hallway to explore a new path.
+    order(System3): Turn right and move down the open hallway to explore a new path.
+[System 3] triggers=['front_blocked'] -> Turn around and follow the open passage to find another route.
+    order(System3): Turn right and move down the open hallway to explore a new path.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and follow the open passage to find another route.
+[System 3] triggers=['area_stagnation'] -> Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and follow the open passage to find another route.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+[System 3] triggers=['front_blocked'] -> Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and move forward into an unexplored passage to leave this stagnant area.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+    order(System3): Turn around and explore the adjacent hallway to find an open route.
+[System 3] triggers=['area_stagnation'] -> Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+[System 3] triggers=['front_blocked'] -> Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and move forward down an open corridor to leave this area.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+[System 3] triggers=['area_stagnation'] -> Turn completely around and move forward into a new area.
+    order(System3): Turn around and follow the open hallway behind you to find a new path.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
+    order(System3): Turn completely around and move forward into a new area.
