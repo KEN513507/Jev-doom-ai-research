@@ -1,0 +1,28 @@
+# 環境変数（APIキーを含む）
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 学習済みモデル
+*.zip
+*.pkl
+*.pt
+*.pth
+
+# ログ・TensorBoard
+logs/
+tensorboard/
+*.log
+
+# 実験の一時ファイル
+experiments/**/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
