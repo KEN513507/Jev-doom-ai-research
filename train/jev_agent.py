@@ -205,7 +205,7 @@ CRITERIA_SETS = {
     },
     # full_map（遮蔽物・角あり）用：角からの横移動で覗いて撃ち、遮蔽に戻る
     "tactical_peeking": {
-        "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path. If item_visible=yes and no enemy is visible, detour toward the item to pick it up. Advance only when open_center=far or open_center=mid. If open_center=near, do NOT advance: turn toward the side that is far (open_left or open_right).",
+        "move_forward": "Only advance when open_center=far or open_center=mid. Do NOT advance if open_center=near; instead turn toward the side that is far (open_left or open_right). If visited cells have stopped increasing, turn_left or turn_right to find a new path. If item_visible=yes and enemy_visible=no, advance toward the item.",
         "use": "Select 'use' whenever front_blocked=yes. In DOOM, some walls are switches that open hidden rooms or monster closets. Try 'use' before turning away. If the first attempt does not open the wall, try up to two times in total, the second from a slightly different position.",
         # 修正A: "PRIMARY DODGE ACTION" を削除。敵が中央にいないときは逃げずに中央へ寄せる
         "move_left": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=left, strafe left toward centering. Also use to peek around corners when no enemy is visible.",
