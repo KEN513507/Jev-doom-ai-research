@@ -275,6 +275,55 @@ class WallAvoider:
         return self.turn
 
 
+# 修正B: 同じ地点での use 失敗検出。USE_FAIL_LIMIT 回目の use（それまでの use で動けていない）を旋回に置き換える
+USE_FAIL_LIMIT = 2
+
+
+class UseFailDetector:
+    def __init__(self, limit: int = USE_FAIL_LIMIT, radius: float = USE_SPOT_RADIUS):
+        self.limit = limit
+        self.radius = radius
+        self.pos = None
+        self.fails = 0
+
+    def filter(self, choice: str, position) -> str:
+        """同じ地点で use が limit 回失敗していれば "turn_right" を返す。それ以外は choice のまま"""
+        if self.pos is not None and math.dist(position, self.pos) >= self.radius:
+            self.pos, self.fails = None, 0  # 動けた = 前回の use は成功
+        if choice != "use":
+            return choice
+        if self.pos is None:
+            self.pos = position
+            return choice
+        if self.fails + 1 >= self.limit:
+            self.pos, self.fails = None, 0
+            return "turn_right"
+        self.fails += 1
+        return choice
+
+
+# 修正B: ドア待機の早期解除。前方中央の深度が DOOR_OPEN_DEPTH_GAIN 増えたら開いた、
+# DOOR_NO_CHANGE_TICS 待っても増えなければドアではない
+DOOR_OPEN_DEPTH_GAIN = 3.0
+DOOR_NO_CHANGE_TICS = 12
+
+
+def center_depth(depth) -> float:
+    """深度バッファの目線の高さ・中央帯の中央値（WallAvoider と同じ領域）"""
+    h, w = depth.shape
+    return float(np.median(depth[h // 2 - 3:h // 2 + 3, w * 2 // 5:w * 3 // 5]))
+
+
+def door_wait_verdict(start_depth: float, current_depth: float, waited_tics: int) -> str | None:
+    """"opened" / "no_door" なら待機を解除、None なら待機継続"""
+    gain = current_depth - start_depth
+    if gain >= DOOR_OPEN_DEPTH_GAIN:
+        return "opened"
+    if waited_tics >= DOOR_NO_CHANGE_TICS and gain < 1.0:
+        return "no_door"
+    return None
+
+
 # area_stagnation 判定：直近 STAGNATION_WINDOW 判断ステップ（frame_skip=4 で 176tic ≈ ゲーム内5秒）の
 # 位置がすべて重心から STAGNATION_RADIUS 単位以内なら、同じ狭い範囲に留まっているとみなす
 STAGNATION_WINDOW = 44
