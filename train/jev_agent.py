@@ -7,9 +7,6 @@ import time
 from collections import deque
 
 import requests
-from pathlib import Path
-from PIL import Image
-import numpy as np
 import vizdoom as vzd
 
 # --- シナリオ定義のインポート ---
@@ -92,13 +89,6 @@ CRITERIA_SETS = {
         "turn_right": "Use only to realign the target when the enemy is slightly off-center.",
         "attack": "CRITICAL: If enemy_visible=yes, you MUST immediately choose 'attack'. Preemptive fire is mandatory. Do NOT attack if no enemy is visible.",
     },
-    "aggressive_p1": {
-        "move_forward": "CRITICAL: Advance along the corridor toward the goal. Move forward whenever enemy_centered=no OR enemy_visible=no. Do NOT stand still.",
-        "move_backward": "Retreat only if health is below 30.",
-        "turn_left": "Rotate left to align with an off-center enemy.",
-        "turn_right": "Rotate right to align with an off-center enemy.",
-        "attack": "Fire ONLY if enemy_centered=yes. Do NOT attack if the enemy is off-center or not visible.",
-    },
 }
 
 # criteria ごとの敵検出閾値（red_mean > threshold で enemy_visible=yes）
@@ -121,11 +111,10 @@ def build_payload(state_text: str, criteria: str | dict = "baseline") -> dict:
             )
     else:
         criteria_dict = criteria
-    extra_keys = set(criteria_dict) - set(ACTION_BUTTONS)
-    if extra_keys:
+    if set(criteria_dict) != set(ACTION_BUTTONS):
         raise ValueError(
-            f"criteria has unknown keys {sorted(extra_keys)}; "
-            f"allowed: {sorted(ACTION_BUTTONS)}"
+            f"criteria keys must match actions {sorted(ACTION_BUTTONS)}, "
+            f"got {sorted(criteria_dict)}"
         )
     return {
         "model": JEV_MODEL,
@@ -213,65 +202,6 @@ def state_to_text(
     return text, red_mean, enemy_visible
 
 
-# System 1（反射層）の発動条件：中央に十分大きな敵がいるとき即攻撃
-SYSTEM1_WIDTH_THRESHOLD = 20.0
-
-
-def should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRESHOLD) -> bool:
-    """System 1 割込条件。
-
-    発動条件（いずれか）:
-      1. ChaingunGuy が視認範囲内（最危険・width=0 のため特別扱い）
-      2. enemy_visible AND enemy_centered AND width >= threshold（至近距離）
-    """
-    if not label_info:
-        return False
-    if not label_info.get("enemy_visible"):
-        return False
-
-    # 条件1: ChaingunGuy は width=0 を返すため、中央判定を無視して常に反射
-    enemy_names = label_info.get("enemy_names", [])
-    if "ChaingunGuy" in enemy_names:
-        return True
-
-    # 条件2: その他の敵は中央かつ至近距離のみ
-    if not label_info.get("enemy_centered"):
-        return False
-    try:
-        w = float(label_info.get("nearest_enemy_width"))
-        if w == 0.0:
-            return True  # 想定外の width=0 への保険
-        return w >= width_threshold
-    except (TypeError, ValueError):
-        return False
-
-
-def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True):
-    """次の行動を決定する。
-
-    decide: state_text -> Jev API応答dict（System2）。
-    allow_system1=False の場合、System 1 をスキップして必ず Jev に委ねる
-    （立上り限定：前回 System 1 発動時は False を渡す）。
-    """
-    label_info = (
-        detect_enemy_from_labels(state, min_width=min_enemy_width)
-        if use_labels
-        else None
-    )
-    if allow_system1 and should_force_attack(label_info):
-        return "attack", "system1", label_info
-    state_text, red_mean, enemy_visible = state_to_text(
-        state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width
-    )
-    choice, probs = extract_choice_and_probs(decide(state_text))
-    return choice, "system2", {
-        "state_text": state_text,
-        "red_mean": red_mean,
-        "enemy_visible": enemy_visible,
-        "probs": probs,
-    }
-
-
 class JevVisualizer:
     """Jev の判断確率を時系列で記録する"""
 
@@ -320,22 +250,6 @@ class JevVisualizer:
         print(f"Saved: {save_path}")
 
 
-
-def save_screenshot(state, out_dir, episode, hit_num, tic):
-    """被弾時のスクリーンショットを保存する"""
-    if state is None or state.screen_buffer is None:
-        return
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # screen_buffer: [C, H, W] -> [H, W, C]
-    img_array = np.transpose(state.screen_buffer, (1, 2, 0))
-    img = Image.fromarray(img_array.astype("uint8"))
-    path = out_dir / f"ep{episode}_hit{hit_num}_tic{tic:04d}.png"
-    img.save(path)
-    return path
-
-
-
 def main():
     global ACTION_BUTTONS  # ← この行を追加
     import argparse
@@ -358,17 +272,6 @@ def main():
         choices=sorted(SCENARIO_BUTTONS.keys()),
         help="ViZDoomシナリオ名（デフォルト: deadly_corridor）",
     )
-    parser.add_argument(
-        "--min-width",
-        type=float,
-        default=MIN_ENEMY_WIDTH,
-        help="視認とみなす最小ラベル幅px（--use-labels時のみ有効）",
-    )
-    parser.add_argument(
-        "--sound",
-        action="store_true",
-        help="ゲーム音を有効化（観戦時のみ推奨。長時間実験では指定しない）",
-    )
 
     args = parser.parse_args()
 
@@ -388,7 +291,6 @@ def main():
     game = vzd.DoomGame()
     game.load_config(f"{vzd.scenarios_path}/{args.scenario}.cfg")
     game.set_window_visible(True)  # ウィンドウ表示（リアルタイム可視化が要件のためTrueを維持）
-    game.set_sound_enabled(args.sound)  # --sound 指定時のみ音声オン（initより前）
     game.set_screen_resolution(vzd.ScreenResolution.RES_160X120)
     game.set_depth_buffer_enabled(False)
     game.set_labels_buffer_enabled(args.use_labels)  # labels検出を使う場合のみ有効化
@@ -410,18 +312,6 @@ def main():
     choice = "move_forward"
     last_reward = 0.0
 
-    # シナリオのボタンに存在しない criteria キーを除去（エピソード共通）
-    if isinstance(args.criteria, str):
-        base_criteria = CRITERIA_SETS.get(
-            args.criteria, SCENARIO_CRITERIA[args.scenario]
-        )
-    else:
-        base_criteria = args.criteria
-    filtered_criteria = {
-        k: v for k, v in base_criteria.items()
-        if k in ACTION_BUTTONS
-    }
-
     while episode < 3:  # 3エピソード実行
         game.new_episode()
         print(f"--- Episode {episode} ---")
@@ -429,10 +319,6 @@ def main():
         # P1: 被弾監視（合格条件 = health が100から一度も下がらない）
         hit_count = 0
         prev_health = 100
-        hit_capture_until = -1  # 被弾後の撮影期限（tic）
-        # System 1/2 発動回数
-        system1_count = 0
-        system2_count = 0
 
         while not game.is_episode_finished():
             # 判断フレームのみ get_state() を呼ぶ
@@ -449,40 +335,22 @@ def main():
                         hit_count += 1
                         print(f"!!! HIT #{hit_count} at step={tic_counter}: "
                               f"{prev_health} -> {current_health}")
-                        # 被弾後 約1秒間 (35tic) スクリーンショットを保存
-                        hit_capture_until = tic_counter + 35
                     prev_health = current_health
-                # 被弾後の連続撮影
-                if hit_count > 0 and tic_counter <= hit_capture_until:
-                    save_screenshot(
-                        state,
-                        f"experiments/hits/ep{episode}",
-                        episode,
-                        hit_count,
-                        tic_counter,
-                    )
-                
+                state_text, red_mean, enemy_visible = state_to_text(
+                    state,
+                    game_vars,
+                    use_labels=args.use_labels,
+                    min_enemy_width=args.min_width if args.use_labels else 0.0,
+                )
                 try:
-                    choice, source, info = resolve_action(
-                        state,
-                        game_vars,
-                        use_labels=args.use_labels,
-                        min_enemy_width=args.min_width if args.use_labels else 0.0,
-                        decide=lambda text: get_jev_decision(
-                            api_key, text, criteria=filtered_criteria, timeout=1.0
-                        ),
+                    jev_resp = get_jev_decision(
+                        api_key, state_text, criteria=args.criteria, timeout=1.0
                     )
-                    if source == "system1":
-                        system1_count += 1
-                        print(f"step={tic_counter} [System1] FORCED attack "
-                              f"(centered, width={info['nearest_enemy_width']:.0f})")
-                    else:
-                        system2_count += 1
-                        viz.log(info["probs"], last_reward, health)
-                        print(f"step={tic_counter} Jev -> {choice} | "
-                              f"red_mean={info['red_mean']:.1f} | "
-                              f"enemy_visible={'yes' if info['enemy_visible'] else 'no'}")
-                        print(f"    state_text: {info['state_text']}")
+                    choice, probs = extract_choice_and_probs(jev_resp)
+                    viz.log(probs, last_reward, health)
+                    print(f"step={tic_counter} Jev -> {choice} | "
+                          f"red_mean={red_mean:.1f} | "
+                          f"enemy_visible={'yes' if enemy_visible else 'no'}")
                 except Exception as e:
                     print(f"[skip] {e}")
 
@@ -499,8 +367,7 @@ def main():
 
         # P1: エピソード終了時の被弾サマリー
         print(f"Episode {episode} done: hits={hit_count}, "
-              f"final_health={prev_health}, steps={tic_counter}, "
-              f"sys1={system1_count}, sys2={system2_count}")
+              f"final_health={prev_health}, steps={tic_counter}")
         episode += 1
 
     game.close()
