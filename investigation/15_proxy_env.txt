@@ -1,0 +1,2 @@
+no_proxy=api.typesafe.ai,127.0.0.1,localhost
+NO_PROXY=api.typesafe.ai,127.0.0.1,localhost

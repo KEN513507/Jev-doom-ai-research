@@ -1,0 +1,7 @@
+NAME                                  ID              SIZE      MODIFIED     
+qwen3.5:4b                            2a654d98e6fb    3.4 GB    3 weeks ago     
+qwen-corrector:latest                 212f6c2e7a2c    986 MB    6 months ago    
+qwen-ken:latest                       dd440ed440c0    986 MB    6 months ago    
+qwen2.5:1.5b                          65ec06548149    986 MB    6 months ago    
+schroneko/gemma-2-2b-jpn-it:latest    fcfc848fe62a    2.8 GB    6 months ago    
+qwen2.5:0.5b                          a8b0c5157701    397 MB    6 months ago    

@@ -1,0 +1,8 @@
+root        1658  0.0  0.0  39108  5648 ?        Ss    9月20   0:00 /usr/bin/python3 /usr/bin/networkd-dispatcher --run-startup-triggers
+root        1995  0.0  0.0 116488  7248 ?        Ssl   9月20   0:00 /usr/bin/python3 /usr/share/unattended-upgrades/unattended-upgrade-shutdown --wait-for-signal
+ollama    426236  0.0  0.0 1936680 10068 ?       Ssl   9月21   0:04 /usr/local/bin/ollama serve
+root      426358  0.0  0.1 970016 25628 ?        Ssl   9月21   1:42 /usr/bin/python3 /usr/bin/fail2ban-server -xf start
+ken       635357  0.0  0.0  15572  3572 ?        Sl    9月21   0:05 /home/ken/.vscode/extensions/ms-python.vscode-python-envs-1.36.0-linux-x64/python-env-tools/bin/pet server
+ken       635754  0.0  0.3 1522219360 61076 ?    Sl    9月21   0:10 /usr/share/code/code /home/ken/.vscode/extensions/ms-python.vscode-pylance-2026.3.1/dist/server.bundle.js --cancellationReceive=file:44d34f9def2a36bbb0aed65ee36cd1b70334302da2 --node-ipc --clientProcessId=632899
+ken      1592295  0.1  0.0  15128  5732 ?        Sl   15:01   0:01 /home/ken/.vscode/extensions/ms-python.vscode-python-envs-1.36.0-linux-x64/python-env-tools/bin/pet server
+ken      1592942  0.5  2.0 1522219424 318796 ?   Sl   15:01   0:03 /usr/share/code/code /home/ken/.vscode/extensions/ms-python.vscode-pylance-2026.3.1/dist/server.bundle.js --cancellationReceive=file:febf376d3ce127f25f43a77169f9368f6c6e09f685 --node-ipc --clientProcessId=1590898

@@ -1,0 +1,8 @@
+
+# conda environments:
+#
+# * -> active
+# + -> frozen
+base                     /home/ken/miniconda3
+vizdoom              *   /home/ken/miniconda3/envs/vizdoom
+

@@ -16,8 +16,9 @@ except ImportError:  # python train/jev_agent.py 直接実行時
     from state_utils import compute_red_metrics, build_state_text
 
 
-JEV_API_URL = "https://api.typesafe.ai/v1/systemone"
+JEV_API_URL = os.environ.get("JEV_API_URL", "http://127.0.0.1:8081/v1/systemone")
 JEV_MODEL = "jev-latest"
+JEV_TIMEOUT = float(os.environ.get("JEV_TIMEOUT", "5.0"))
 
 # 接続を使い回す（毎回新規接続だと ~800ms に逆戻りするため最重要）
 _SESSION = requests.Session()
@@ -53,9 +54,12 @@ def build_payload(state_text: str) -> dict:
     }
 
 
-def get_jev_decision(api_key: str, state_text: str, timeout: float = 2.0) -> dict:
+def get_jev_decision(api_key: str | None, state_text: str, timeout: float = 2.0) -> dict:
     """Jev API を呼び出して判断を取得する（Session 再利用）"""
-    _SESSION.headers.update({"Authorization": f"Bearer {api_key}"})
+    if api_key:
+        _SESSION.headers.update({"Authorization": f"Bearer {api_key}"})
+    elif "Authorization" in _SESSION.headers:
+        del _SESSION.headers["Authorization"]
     response = _SESSION.post(
         JEV_API_URL,
         json=build_payload(state_text),

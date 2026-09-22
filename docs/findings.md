@@ -28,3 +28,13 @@
 - state_utils.py に定数を集約し、calib と agent で完全に同じスライス・閾値を使用
 - 160×120, center領域 (slice[:, 20:90, :]) で安定した分離を確認
 - baseline 41.6, enemy 52-65 → 閾値48.0で偽陽性・偽陰性を最小化
+## Finding 6: red_mean 閾値による完全な状況依存判断
+
+- state_utils.py に定数を集約（解像度・スライス・閾値を一元管理）
+- calib_v2: baseline median=41.6, enemy max=52-65
+- ENEMY_RED_THRESHOLD=48.0 で判定
+- 実機ログ: 
+  - red_mean 41-47 → enemy_visible=no → move_forward (100%)
+  - red_mean 48-61 → enemy_visible=yes → attack (100%)
+- 境界 48.0 ケースも正しく判定
+- 結論: Jevは criteria + 数値コンテキストに完全に忠実

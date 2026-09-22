@@ -1,0 +1,6 @@
+合計 12
+drwxrwxr-x  3 ken ken 4096  9月 22 14:12 .
+drwxrwxr-x 16 ken ken 4096  9月 22 14:12 ..
+drwxrwxr-x 13 ken ken 4096  9月 22 15:11 doom-ai-research
+llama.cpp not installed
+no models dir
