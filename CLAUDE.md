@@ -111,3 +111,8 @@ pytest tests/ -v
 - 研究の成果は「被弾ゼロ」だけでなく「Jevの判断プロセスの可視化」も含む。
 - 被弾ゼロはクラウドJevでは物理的に不可能（ChaingunGuy初弾57ms vs API遅延250ms）。
 ```
+## SSOT (Single Source of Truth)
+
+クリア判定とスコア式、3層アーキテクチャの実態は
+`docs/ssot_clear_definition.md` に集約。
+この定義に反する評価・設計は無効。
