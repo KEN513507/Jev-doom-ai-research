@@ -25,11 +25,9 @@ try:
         MIN_ENEMY_WIDTH,
         AreaStagnationDetector,
         ForwardBlockDetector,
-        WallProbe,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
-        detect_items_from_labels,
         extract_key_events,
     )
     from train.system3_core import (
@@ -44,11 +42,9 @@ except ImportError:  # python train/jev_agent.py 直接実行時
         MIN_ENEMY_WIDTH,
         AreaStagnationDetector,
         ForwardBlockDetector,
-        WallProbe,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
-        detect_items_from_labels,
         extract_key_events,
     )
     from system3_core import (
@@ -154,15 +150,15 @@ CRITERIA_SETS = {
         "turn_right": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",
         "attack": "Fire if enemy_centered=yes AND health (var0) >= 50. Below 50, prefer strafing or retreating over attacking. Do NOT attack if no enemy is visible.",
     },
-    # full_map（遮蔽物・角あり）用：壁に張り付かない。ドア（use 1回）とアイテム以外では即座に旋回・移動する
+    # full_map（遮蔽物・角あり）用：角からの横移動で覗いて撃ち、遮蔽に戻る
     "tactical_peeking": {
-        "move_forward": "Advance only when front_blocked=no. If item_visible=yes and item_centered=yes, move forward to pick it up. Never keep pushing into a wall.",
-        "use": "Select 'use' ONLY when front_blocked=yes and wall_ahead is not reported (it may be a door). Never select 'use' when wall_ahead=yes.",
-        "move_left": "Strafe left to slide away from a wall (wall_ahead=yes) or to dodge enemy fire.",
-        "move_right": "Strafe right to slide away from a wall (wall_ahead=yes) or to dodge enemy fire.",
-        "turn_left": "CRITICAL: If wall_ahead=yes, turn immediately to face an open direction. Also turn to center an off-center enemy or item.",
-        "turn_right": "CRITICAL: If wall_ahead=yes, turn immediately to face an open direction. Also turn to center an off-center enemy or item.",
-        "attack": "Fire ONLY when enemy_centered=yes. If enemy_visible=yes but enemy_centered=no, turn_left or turn_right to align first.",
+        "move_forward": "Advance through the area. If 'front_blocked=yes', switch to 'use' or turn.",
+        "use": "Select 'use' ONLY when 'front_blocked=yes' to open doors or operate switches.",
+        "move_left": "Strafe left to peek around corners or dodge back into cover.",
+        "move_right": "Strafe right to peek around corners or dodge back into cover.",
+        "turn_left": "Rotate to check corners and align aim with enemies.",
+        "turn_right": "Rotate to check corners and align aim with enemies.",
+        "attack": "Fire when an enemy is visible in your line of sight.",
     },
 }
 
@@ -258,8 +254,6 @@ def state_to_text(
     use_labels: bool = False,
     min_enemy_width: float = 0.0,
     front_blocked: bool | None = None,
-    wall_ahead: bool = False,
-    report_items: bool = False,
 ) -> tuple[str, float, bool]:
     """ViZDoom の状態を Jev が理解できるテキストに変換する。
 
@@ -282,16 +276,8 @@ def state_to_text(
                 f"enemy_centered={'yes' if info['enemy_centered'] else 'no'}"
             )
             extra_parts.append(f"enemy_types={','.join(info['enemy_names'])}")
-        if report_items:
-            items = detect_items_from_labels(state)
-            extra_parts.append(f"item_visible={'yes' if items['item_visible'] else 'no'}")
-            if items["item_visible"]:
-                extra_parts.append(f"item_centered={'yes' if items['item_centered'] else 'no'}")
-                extra_parts.append(f"item_types={','.join(items['item_names'])}")
     if front_blocked is not None:
         extra_parts.append(f"front_blocked={'yes' if front_blocked else 'no'}")
-        if front_blocked and wall_ahead:
-            extra_parts.append("wall_ahead=yes")
     text = build_state_text(game_vars, red_mean, enemy_visible)
     if extra_parts:
         text = f"{text} {', '.join(extra_parts)}"
@@ -332,7 +318,7 @@ def should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRES
 
 
 def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True,
-                   front_blocked=None, wall_ahead=False, report_items=False):
+                   front_blocked=None):
     """次の行動を決定する。
 
     decide: state_text -> Jev API応答dict（System2）。
@@ -348,7 +334,7 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
         return "attack", "system1", label_info
     state_text, red_mean, enemy_visible = state_to_text(
         state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width,
-        front_blocked=front_blocked, wall_ahead=wall_ahead, report_items=report_items,
+        front_blocked=front_blocked,
     )
     choice, probs = extract_choice_and_probs(decide(state_text))
     return choice, "system2", {
