@@ -14,15 +14,16 @@ import vizdoom as vzd
 
 # --- シナリオ定義のインポート ---
 try:
-    from train.scenarios import SCENARIO_BUTTONS, SCENARIO_CRITERIA
+    from train.scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA
 except ImportError:
-    from scenarios import SCENARIO_BUTTONS, SCENARIO_CRITERIA
+    from scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA
 
 
 try:
     from train.state_utils import (
         ENEMY_RED_THRESHOLD,
         MIN_ENEMY_WIDTH,
+        ForwardBlockDetector,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
@@ -31,6 +32,7 @@ except ImportError:  # python train/jev_agent.py 直接実行時
     from state_utils import (
         ENEMY_RED_THRESHOLD,
         MIN_ENEMY_WIDTH,
+        ForwardBlockDetector,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
@@ -100,6 +102,13 @@ CRITERIA_SETS = {
         "attack": "Fire ONLY if enemy_centered=yes. Do NOT attack if the enemy is off-center or not visible.",
     },
     # Sys1 が排除できなかった場合に被弾リスク最小化を優先する基準（B方針：被弾回避重視）
+    "take_cover_p1": {
+        "move_forward": "Advance toward the enemy only when enemy_visible=no or health is high and no immediate threat.",
+        "move_backward": "Retreat behind cover when health is below 50 or under heavy fire.",
+        "move_left": "Strafe left to dodge incoming fire or peek from cover.",
+        "move_right": "Strafe right to dodge incoming fire or peek from cover.",
+        "attack": "Fire when enemy_centered=yes AND health > 30. Prioritize cover when reloading or exposed.",
+    },
     "tactical_p2": {
         "move_forward": "CRITICAL: Advance toward the goal. If no enemy is visible, always move forward.",
         "move_backward": "Retreat ONLY if health < 30 AND enemy_centered=yes. Do NOT retreat otherwise.",
@@ -124,6 +133,16 @@ CRITERIA_SETS = {
         "turn_left": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",
         "turn_right": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",
         "attack": "Fire if enemy_centered=yes AND health (var0) >= 50. Below 50, prefer strafing or retreating over attacking. Do NOT attack if no enemy is visible.",
+    },
+    # full_map（遮蔽物・角あり）用：角からの横移動で覗いて撃ち、遮蔽に戻る
+    "tactical_peeking": {
+        "move_forward": "Advance through the area. If 'front_blocked=yes', switch to 'use' or turn.",
+        "use": "Select 'use' ONLY when 'front_blocked=yes' to open doors or operate switches.",
+        "move_left": "Strafe left to peek around corners or dodge back into cover.",
+        "move_right": "Strafe right to peek around corners or dodge back into cover.",
+        "turn_left": "Rotate to check corners and align aim with enemies.",
+        "turn_right": "Rotate to check corners and align aim with enemies.",
+        "attack": "Fire when an enemy is visible in your line of sight.",
     },
 }
 
@@ -211,6 +230,7 @@ def state_to_text(
     threshold: float = ENEMY_RED_THRESHOLD,
     use_labels: bool = False,
     min_enemy_width: float = 0.0,
+    front_blocked: bool | None = None,
 ) -> tuple[str, float, bool]:
     """ViZDoom の状態を Jev が理解できるテキストに変換する。
 
@@ -233,6 +253,8 @@ def state_to_text(
                 f"enemy_centered={'yes' if info['enemy_centered'] else 'no'}"
             )
             extra_parts.append(f"enemy_types={','.join(info['enemy_names'])}")
+    if front_blocked is not None:
+        extra_parts.append(f"front_blocked={'yes' if front_blocked else 'no'}")
     text = build_state_text(game_vars, red_mean, enemy_visible)
     if extra_parts:
         text = f"{text} {', '.join(extra_parts)}"
@@ -272,7 +294,8 @@ def should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRES
         return False
 
 
-def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True):
+def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True,
+                   front_blocked=None):
     """次の行動を決定する。
 
     decide: state_text -> Jev API応答dict（System2）。
@@ -287,7 +310,8 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
     if allow_system1 and should_force_attack(label_info):
         return "attack", "system1", label_info
     state_text, red_mean, enemy_visible = state_to_text(
-        state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width
+        state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width,
+        front_blocked=front_blocked,
     )
     choice, probs = extract_choice_and_probs(decide(state_text))
     return choice, "system2", {
@@ -296,6 +320,16 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
         "enemy_visible": enemy_visible,
         "probs": probs,
     }
+
+
+def execute_action(game, action_vec, frame_skip, *, tap=False):
+    """tap=True なら 1tic だけ押して残りは離す（USE は押した瞬間しか作動せず、押しっぱなしでは再作動しない）"""
+    if not tap:
+        return game.make_action(action_vec, frame_skip)
+    reward = game.make_action(action_vec, 1)
+    if frame_skip > 1 and not game.is_episode_finished():
+        reward += game.make_action([0] * len(action_vec), frame_skip - 1)
+    return reward
 
 
 class JevVisualizer:
@@ -412,7 +446,20 @@ def main():
 
     # --- 初期化: 極限軽量化 ---
     game = vzd.DoomGame()
-    game.load_config(f"{vzd.scenarios_path}/{args.scenario}.cfg")
+    full_map = FULL_MAP_SCENARIOS.get(args.scenario)
+    if full_map:
+        game.load_config(f"{vzd.scenarios_path}/{full_map['cfg']}")
+        game.set_doom_map(full_map["map"])
+        # deadly_corridor.cfg 相当に揃える（game_vars[0]=HEALTH 前提、HUD/フラッシュは red_mean を乱す）
+        game.set_available_buttons([getattr(vzd.Button, b) for b in scenario_buttons])
+        game.set_available_game_variables([vzd.GameVariable.HEALTH])
+        game.set_episode_timeout(full_map["episode_timeout"])
+        game.set_render_hud(False)
+        game.set_render_messages(False)
+        game.set_render_screen_flashes(False)
+        game.set_audio_buffer_enabled(False)
+    else:
+        game.load_config(f"{vzd.scenarios_path}/{args.scenario}.cfg")
     # 撃破数を取得（cfg書き換え不要。HEALTH の後に KILLCOUNT が追加される）
     game.add_available_game_variable(vzd.GameVariable.KILLCOUNT)
     game.set_window_visible(True)  # ウィンドウ表示（リアルタイム可視化が要件のためTrueを維持）
@@ -463,6 +510,9 @@ def main():
         system2_count = 0
         prev_system1 = False
         last_kills = 0
+        # USE を持つシナリオのみ front_blocked を state_text に載せる（他シナリオの入力は不変）
+        block_detector = ForwardBlockDetector() if "use" in ACTION_BUTTONS else None
+        front_blocked = None
 
         while not game.is_episode_finished():
             # 判断フレームのみ get_state() を呼ぶ
@@ -493,7 +543,14 @@ def main():
                         hit_count,
                         tic_counter,
                     )
-                
+                # この時点の choice は前回の判断で実行済みの行動
+                if block_detector is not None:
+                    front_blocked = block_detector.update(
+                        (game.get_game_variable(vzd.GameVariable.POSITION_X),
+                         game.get_game_variable(vzd.GameVariable.POSITION_Y)),
+                        choice,
+                    )
+
                 try:
                     choice, source, info = resolve_action(
                         state,
@@ -504,6 +561,7 @@ def main():
                             api_key, text, criteria=filtered_criteria, timeout=1.0
                         ),
                         allow_system1=not prev_system1,
+                        front_blocked=front_blocked,
                     )
                     prev_system1 = (source == "system1")
                     if source == "system1":
@@ -527,8 +585,10 @@ def main():
             if target in button_names:
                 action_vec[button_names.index(target)] = 1
 
-            # フレームスキップで進める
-            last_reward = game.make_action(action_vec, frame_skip)
+            # フレームスキップで進める（USE はタップ）
+            last_reward = execute_action(
+                game, action_vec, frame_skip, tap=(target == "USE")
+            )
             tic_counter += frame_skip
 
         # P1: エピソード終了時の被弾サマリー

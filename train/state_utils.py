@@ -3,6 +3,8 @@
 calib_red.py と jev_agent.py は必ずこのモジュールを使うこと。
 スライス範囲を変更する場合は、ここだけを編集する。
 """
+import math
+from collections import deque
 
 # 画面解像度（この値に依存してスライスが決まる）
 USE_RESOLUTION = "RES_160X120"
@@ -33,11 +35,13 @@ def get_slice():
 
 
 # labels_buffer で敵と判定する種類（deadly_corridor実測：Zombieman, ShotgunGuy, ChaingunGuy）
+# freedoom2 map01 実測：Zombieman, ShotgunGuy, DoomImp
 ENEMY_NAMES = frozenset({
     "Zombieman",
     "ShotgunGuy",
     "ChaingunGuy",
     "Imp",
+    "DoomImp",
     "Demon",
     "Cacodemon",
     "HellKnight",
@@ -163,3 +167,28 @@ def build_state_text(game_vars, red_mean, enemy_visible):
         "Balance offense and movement. Do not attack blindly when no enemy is visible."
     )
     return f"{context} Current state: {', '.join(parts) if parts else 'unknown'}"
+
+
+# front_blocked 判定：move_forward を BLOCKED_WINDOW 判断ステップ続けても
+# 合計移動量が BLOCKED_MAX_DISTANCE 未満なら前方が塞がれている（壁・閉じたドア）とみなす。
+# 実測（freedoom2 map01, frame_skip=4）：自由移動 約29単位/ステップ、ドア前 0。
+# 静止からの歩き出しは 0→1→9 単位と遅く、3ステップ窓では合計≈10で誤検知の余地が小さいため 4。
+BLOCKED_WINDOW = 4
+BLOCKED_MAX_DISTANCE = 8.0
+
+
+class ForwardBlockDetector:
+    def __init__(self, window: int = BLOCKED_WINDOW, max_distance: float = BLOCKED_MAX_DISTANCE):
+        self.window = window
+        self.max_distance = max_distance
+        self.positions = deque(maxlen=window + 1)
+
+    def update(self, position, last_action) -> bool:
+        """position: 現在の (x, y)。last_action: 前回の観測から今回までに実行した行動。"""
+        if last_action != "move_forward":
+            self.positions.clear()
+        self.positions.append(position)
+        if len(self.positions) <= self.window:
+            return False
+        (x0, y0), (x1, y1) = self.positions[0], self.positions[-1]
+        return math.hypot(x1 - x0, y1 - y0) < self.max_distance

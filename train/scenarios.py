@@ -25,6 +25,18 @@ SCENARIO_BUTTONS = {
         "MOVE_LEFT", "MOVE_RIGHT",
         "MOVE_FORWARD", "MOVE_BACKWARD", "ATTACK",
     ],
+    "full_map": [
+        "MOVE_LEFT", "MOVE_RIGHT", "ATTACK",
+        "MOVE_FORWARD", "MOVE_BACKWARD",
+        "TURN_LEFT", "TURN_RIGHT", "USE",
+    ],
+}
+
+
+# 同梱 .cfg 名とシナリオ名が一致しないフルマップ用の設定
+# freedoom2.cfg はゲーム変数なし・19ボタン・126000tic上限のため main 側で上書きする
+FULL_MAP_SCENARIOS = {
+    "full_map": {"cfg": "freedoom2.cfg", "map": "map01", "episode_timeout": 2100},
 }
 
 
@@ -81,6 +93,16 @@ SCENARIO_CRITERIA = {
         "move_forward": "Advance cautiously.",
         "move_backward": "Retreat to cover.",
         "attack": "Fire at the visible enemy.",
+    },
+    "full_map": {
+        "move_left": "Strafe left to peek around corners or dodge fire.",
+        "move_right": "Strafe right to peek around corners or dodge fire.",
+        "attack": "Fire at any visible enemy.",
+        "move_forward": "Advance to explore the map.",
+        "move_backward": "Retreat behind cover if under heavy fire.",
+        "turn_left": "Rotate left to scan or aim.",
+        "turn_right": "Rotate right to scan or aim.",
+        "use": "Press USE to open a door or activate a switch directly in front.",
     },
 }
 
