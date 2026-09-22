@@ -202,7 +202,7 @@ CRITERIA_SETS = {
     # full_map（遮蔽物・角あり）用：角からの横移動で覗いて撃ち、遮蔽に戻る
     "tactical_peeking": {
         "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path. If item_visible=yes and no enemy is visible, detour toward the item to pick it up. Advance only when open_center=far or open_center=mid. If open_center=near, do NOT advance: turn toward the side that is far (open_left or open_right).",
-        "use": "Select 'use' ONLY when 'front_blocked=yes' to open doors or operate switches.",
+        "use": "Select 'use' whenever front_blocked=yes. In DOOM, some walls are switches that open hidden rooms or monster closets. Try 'use' before turning away. If the first attempt does not open the wall, try up to two times in total, the second from a slightly different position.",
         # 修正A: "PRIMARY DODGE ACTION" を削除。敵が中央にいないときは逃げずに中央へ寄せる
         "move_left": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=left, strafe left toward centering. Also use to peek around corners when no enemy is visible.",
         "move_right": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=right, strafe right toward centering. Also use to peek around corners when no enemy is visible.",
@@ -238,6 +238,18 @@ CRITERIA_SETS = {
         "strafe_attack_left": "PRIMARY COMBAT ACTION. Strafe left AND fire simultaneously. Use when enemy_centered=yes to dodge incoming fire while keeping damage output.",
         "strafe_attack_right": "PRIMARY COMBAT ACTION. Strafe right AND fire simultaneously. Use when enemy_centered=yes to dodge incoming fire while keeping damage output.",
         "advance_attack": "Advance AND fire simultaneously. Use to close distance on a centered enemy while maintaining pressure.",
+    },
+    # 隠し部屋・モンスタークローゼット（壁スイッチ）を探しながら探索する汎用戦略。マップ固有の情報は書かない
+    "tactical_secret_hunt": {
+        "attack": "Fire whenever enemy_visible=yes. Prefer enemy_centered=yes when possible.",
+        "move_forward": "Advance only when open_center=far or open_center=mid. If open_center=near, do NOT advance. If visited cells stop increasing, try turn_left and turn_right alternately to find a new direction.",
+        "turn_left": "Turn left when open_left=far. If front_blocked=yes, try 'use' before turning.",
+        "turn_right": "Turn right when open_right=far. If front_blocked=yes, try 'use' before turning.",
+        "use": "Select 'use' whenever front_blocked=yes. DOOM has hidden rooms and monster closets opened by wall switches. Try 'use' up to two times in total, the second from a slightly different position, before giving up and turning away.",
+        "move_backward": "Retreat only if health is below 20 AND enemy is visible AND very close.",
+        "strafe_attack_left": "Use when enemy_visible=yes AND enemy_side=left.",
+        "strafe_attack_right": "Use when enemy_visible=yes AND enemy_side=right.",
+        "advance_attack": "Use when enemy_visible=yes AND enemy_centered=yes.",
     },
 }
 
