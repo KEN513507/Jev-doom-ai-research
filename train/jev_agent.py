@@ -4,6 +4,7 @@ API key is read from TYPESAFE_API_KEY environment variable only.
 """
 import math
 import os
+import statistics
 import time
 from collections import deque
 
@@ -39,10 +40,12 @@ try:
         WALL_NEAR_DEPTH,
         center_depth,
         door_wait_verdict,
+        open_directions,
         WallAvoider,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
+        detect_items_from_labels,
         extract_key_events,
     )
     from train.system3_core import (
@@ -61,10 +64,12 @@ except ImportError:  # python train/jev_agent.py 直接実行時
         WALL_NEAR_DEPTH,
         center_depth,
         door_wait_verdict,
+        open_directions,
         WallAvoider,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
+        detect_items_from_labels,
         extract_key_events,
     )
     from system3_core import (
@@ -196,13 +201,13 @@ CRITERIA_SETS = {
     },
     # full_map（遮蔽物・角あり）用：角からの横移動で覗いて撃ち、遮蔽に戻る
     "tactical_peeking": {
-        "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path.",
+        "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path. If item_visible=yes and no enemy is visible, detour toward the item to pick it up. Advance only when open_center=far or open_center=mid. If open_center=near, do NOT advance: turn toward the side that is far (open_left or open_right).",
         "use": "Select 'use' ONLY when 'front_blocked=yes' to open doors or operate switches.",
         # 修正A: "PRIMARY DODGE ACTION" を削除。敵が中央にいないときは逃げずに中央へ寄せる
         "move_left": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=left, strafe left toward centering. Also use to peek around corners when no enemy is visible.",
         "move_right": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=right, strafe right toward centering. Also use to peek around corners when no enemy is visible.",
-        "turn_left": "If enemy_visible=yes and enemy_side=left, turn left toward the enemy to center it. Otherwise rotate to check corners.",
-        "turn_right": "If enemy_visible=yes and enemy_side=right, turn right toward the enemy to center it. Otherwise rotate to check corners.",
+        "turn_left": "If enemy_visible=yes and enemy_side=left, turn left toward the enemy to center it. If no enemy is visible, turn left when open_left is the most open direction (far) and open_center is not far.",
+        "turn_right": "If enemy_visible=yes and enemy_side=right, turn right toward the enemy to center it. If no enemy is visible, turn right when open_right is the most open direction (far) and open_center is not far.",
         "attack": "Fire whenever enemy_visible=yes. Do not wait for centering. Do NOT attack if no enemy is visible.",
         # ★ 複合アクション: 動きながら撃つ（被弾リスクが高い時だけ）
         "strafe_attack_left": "Strafe left AND fire simultaneously. Use ONLY when enemy_centered=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy).",
@@ -304,6 +309,10 @@ def build_payload(state_text: str, criteria: str | dict = "baseline", order: str
     }
 
 
+# 直近の Jev API 呼び出しのレイテンシ（ms）。main がログに出す（行動には使わない）
+LAST_JEV_LATENCY_MS = [None]
+
+
 def get_jev_decision(
     api_key: str | None,
     state_text: str,
@@ -316,11 +325,15 @@ def get_jev_decision(
         _SESSION.headers.update({"Authorization": f"Bearer {api_key}"})
     elif "Authorization" in _SESSION.headers:
         del _SESSION.headers["Authorization"]
-    response = _SESSION.post(
-        JEV_API_URL,
-        json=build_payload(state_text, criteria=criteria, order=order),
-        timeout=timeout,
-    )
+    t0 = time.perf_counter()
+    try:
+        response = _SESSION.post(
+            JEV_API_URL,
+            json=build_payload(state_text, criteria=criteria, order=order),
+            timeout=timeout,
+        )
+    finally:  # タイムアウト（[skip]）でも記録する
+        LAST_JEV_LATENCY_MS[0] = (time.perf_counter() - t0) * 1000
     response.raise_for_status()
     return response.json()
 
@@ -351,6 +364,9 @@ def state_to_text(
     use_labels: bool = False,
     min_enemy_width: float = 0.0,
     front_blocked: bool | None = None,
+    took_damage: bool | None = None,
+    report_items: bool = False,
+    report_open: bool = False,
 ) -> tuple[str, float, bool]:
     """ViZDoom の状態を Jev が理解できるテキストに変換する。
 
@@ -386,6 +402,21 @@ def state_to_text(
                 extra_parts.append(f"enemy_side={side}")
     if front_blocked is not None:
         extra_parts.append(f"front_blocked={'yes' if front_blocked else 'no'}")
+    if took_damage is not None:
+        # Phase 3a（2026-09-23）: 前回判断以降の被弾有無。画面外からの被弾への反応用
+        extra_parts.append(f"took_damage={'yes' if took_damage else 'no'}")
+    if report_open and state is not None and getattr(state, "depth_buffer", None) is not None:
+        # 3方向の開け具合（far / mid / near）。どちらへ進めば歩けるかを Jev に渡す
+        extra_parts.extend(f"{k}={v}" for k, v in open_directions(state.depth_buffer).items())
+    if report_items:
+        # アイテム報告（要求時のみ）。敵がいないときの回収判断用
+        item_info = detect_items_from_labels(state)
+        extra_parts.append(f"item_visible={'yes' if item_info['item_visible'] else 'no'}")
+        if item_info["item_visible"]:
+            extra_parts.append(
+                f"item_centered={'yes' if item_info['item_centered'] else 'no'}"
+            )
+            extra_parts.append(f"item_types={','.join(item_info['item_names'])}")
     text = build_state_text(game_vars, red_mean, enemy_visible)
     if extra_parts:
         text = f"{text} {', '.join(extra_parts)}"
@@ -426,7 +457,8 @@ def should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRES
 
 
 def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True,
-                   front_blocked=None, memory_summary=""):
+                   front_blocked=None, memory_summary="", took_damage=None,
+                   report_items=False, report_open=False):
     """次の行動を決定する。
 
     decide: state_text -> Jev API応答dict（System2）。
@@ -442,7 +474,8 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
         return "attack", "system1", label_info
     state_text, red_mean, enemy_visible = state_to_text(
         state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width,
-        front_blocked=front_blocked,
+        front_blocked=front_blocked, took_damage=took_damage,
+        report_items=report_items, report_open=report_open,
     )
     if memory_summary:
         state_text = state_text + f" [Memory: {memory_summary}]"
@@ -620,6 +653,11 @@ def main():
         help="乱数の種。エピソード i は seed+i を使う（条件間で同じ敵の動きにそろえる比較用）",
     )
     parser.add_argument(
+        "--no-open-dirs",
+        action="store_true",
+        help="3方向の開け具合（open_left/center/right）を Jev に渡さない（効果の切り分け用）",
+    )
+    parser.add_argument(
         "--no-door-fix",
         action="store_true",
         help="修正B（use 失敗検出・ドア待機の早期解除）を無効化（A/B 切り分け用）",
@@ -739,6 +777,7 @@ def main():
         # P1: 被弾監視（合格条件 = health が100から一度も下がらない）
         hit_count = 0
         prev_health = 100
+        prev_decision_health = 100  # Phase 3a: 前回判断時の HP（took_damage 判定用）
         hit_capture_until = -1  # 被弾後の撮影期限（tic）
         # System 1/2 発動回数
         system1_count = 0
@@ -767,6 +806,7 @@ def main():
         # 弾消費の計測（武器が変わったステップの増減は数えない）
         ammo_used = 0
         damage_taken = 0  # 被ダメージの合計（回復アイテムの影響を受けない主指標）
+        jev_latencies = []  # Jev API のレイテンシ（ms）。[skip] も含む
         ammo_min = None  # 銃（スロット1=拳・チェーンソー以外）の弾の最小値。0 なら弾切れ
         melee_steps = 0  # スロット1（拳・チェーンソー）を持っていたステップ数
         attack_steps = 0
@@ -856,6 +896,10 @@ def main():
 
                 info = None
                 jev_line, reason = "(no decision)", ""
+                LAST_JEV_LATENCY_MS[0] = None  # System 1 で Jev を呼ばなかった判断と区別する
+                # Phase 3a: 前回判断以降に HP が減っていれば被弾あり
+                took_damage = int(health) < prev_decision_health
+                prev_decision_health = int(health)
                 try:
                     choice, source, info = resolve_action(
                         state,
@@ -869,6 +913,9 @@ def main():
                         allow_system1=not prev_system1,
                         front_blocked=front_blocked,
                         memory_summary=memory_summary,
+                        took_damage=took_damage,
+                        report_items=True,
+                        report_open=not args.no_open_dirs,
                     )
                     prev_system1 = (source == "system1")
                     if source == "system1":
@@ -892,6 +939,9 @@ def main():
                 except Exception as e:
                     print(f"[skip] {e}")
                     jev_line = f"[skip] {str(e)[:60]}"
+                if LAST_JEV_LATENCY_MS[0] is not None:  # 成功・[skip] とも（System 1 のみの判断は除く）
+                    jev_latencies.append(LAST_JEV_LATENCY_MS[0])
+                    print(f"step={tic_counter} [Jev] latency={LAST_JEV_LATENCY_MS[0]:.0f}ms")
 
                 # 付け焼き刃: STUCK_TICS の間ほぼ動かなければ 右→左→後退 の順に脱出を試す。
                 # ドア待機中（意図的な停止）と敵視認中（立ち止まって撃つのが正常）は数えない
@@ -1042,7 +1092,8 @@ def main():
               f"dmg_hits={int(game.get_game_variable(vzd.GameVariable.HITCOUNT))}, "
               f"damage_taken={damage_taken}, "
               f"ammo_min={int(ammo_min) if ammo_min is not None else -1}, melee_steps={melee_steps}, "
-              f"seed={episode_seed if episode_seed is not None else -1}")
+              f"seed={episode_seed if episode_seed is not None else -1}, "
+              f"jev_latency_median={statistics.median(jev_latencies) if jev_latencies else -1:.0f}")
         episode += 1
 
     if sys3 is not None:

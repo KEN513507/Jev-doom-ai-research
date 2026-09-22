@@ -308,6 +308,31 @@ DOOR_OPEN_DEPTH_GAIN = 3.0
 DOOR_NO_CHANGE_TICS = 12
 
 
+# 3方向の開け具合（Jev に「どちらが開けているか」を渡す）。境界は WallAvoider・center_depth と同じ：
+# 左 = 画面の 0〜2/5、正面 = 2/5〜3/5、右 = 3/5〜1、縦は目線の高さ（中央 ±3 行）。
+# near = WALL_NEAR_DEPTH 以下（約44単位、WallAvoider が壁と判断する距離）、far = OPEN_FAR_DEPTH 超（約140単位、1セル以上）
+OPEN_FAR_DEPTH = 20.0
+
+
+def _openness(median: float) -> str:
+    if median <= WALL_NEAR_DEPTH:
+        return "near"
+    if median > OPEN_FAR_DEPTH:
+        return "far"
+    return "mid"
+
+
+def open_directions(depth) -> dict[str, str]:
+    """深度バッファから {"open_left", "open_center", "open_right"} → "far" / "mid" / "near" を返す"""
+    h, w = depth.shape
+    band = depth[h // 2 - 3:h // 2 + 3]
+    return {
+        "open_left": _openness(float(np.median(band[:, :w * 2 // 5]))),
+        "open_center": _openness(float(np.median(band[:, w * 2 // 5:w * 3 // 5]))),
+        "open_right": _openness(float(np.median(band[:, w * 3 // 5:]))),
+    }
+
+
 def center_depth(depth) -> float:
     """深度バッファの目線の高さ・中央帯の中央値（WallAvoider と同じ領域）"""
     h, w = depth.shape
