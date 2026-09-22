@@ -402,6 +402,8 @@ def main():
     # --- 初期化: 極限軽量化 ---
     game = vzd.DoomGame()
     game.load_config(f"{vzd.scenarios_path}/{args.scenario}.cfg")
+    # 撃破数を取得（cfg書き換え不要。HEALTH の後に KILLCOUNT が追加される）
+    game.add_available_game_variable(vzd.GameVariable.KILLCOUNT)
     game.set_window_visible(True)  # ウィンドウ表示（リアルタイム可視化が要件のためTrueを維持）
     game.set_sound_enabled(args.sound)  # --sound 指定時のみ音声オン（initより前）
     game.set_screen_resolution(vzd.ScreenResolution.RES_160X120)
@@ -448,6 +450,8 @@ def main():
         # System 1/2 発動回数
         system1_count = 0
         system2_count = 0
+        prev_system1 = False
+        last_kills = 0
 
         while not game.is_episode_finished():
             # 判断フレームのみ get_state() を呼ぶ
@@ -457,6 +461,8 @@ def main():
                     break
                 game_vars = list(state.game_variables)
                 health = game_vars[0] if game_vars else 0
+                if len(game_vars) > 1:
+                    last_kills = int(game_vars[1])  # KILLCOUNT（追加変数）
                 # P1: 被弾検出（health の減少を数える）
                 if game_vars:
                     current_health = int(game_vars[0])
@@ -486,7 +492,9 @@ def main():
                         decide=lambda text: get_jev_decision(
                             api_key, text, criteria=filtered_criteria, timeout=1.0
                         ),
+                        allow_system1=not prev_system1,
                     )
+                    prev_system1 = (source == "system1")
                     if source == "system1":
                         system1_count += 1
                         print(f"step={tic_counter} [System1] FORCED attack "
@@ -515,7 +523,8 @@ def main():
         # P1: エピソード終了時の被弾サマリー
         print(f"Episode {episode} done: hits={hit_count}, "
               f"final_health={prev_health}, steps={tic_counter}, "
-              f"sys1={system1_count}, sys2={system2_count}")
+              f"sys1={system1_count}, sys2={system2_count}, "
+              f"kills={last_kills}")
         episode += 1
 
     game.close()
