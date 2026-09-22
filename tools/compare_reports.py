@@ -164,6 +164,14 @@ def compare(base_eps: list[dict], new_eps: list[dict]) -> list[dict]:
     return rows
 
 
+def decide(rows: list[dict], primary: str = "score") -> str:
+    """ループの採否に使う1語の判定。kills・被ダメージ合計のどちらかが悪化候補なら、主指標に関わらず悪化候補"""
+    by_name = {r["metric"]: r for r in rows}
+    if any(by_name.get(m, {}).get("verdict") == "悪化候補" for m in GUARD_METRICS):
+        return "悪化候補"
+    return by_name.get(primary, {}).get("verdict", "判定不可")
+
+
 def _fmt(xs: list[float]) -> str:
     return "[" + " ".join(f"{x:g}" if abs(x) >= 1 or x == 0 else f"{x:.2f}" for x in xs) + "]"
 
@@ -173,6 +181,8 @@ def main() -> None:
     parser.add_argument("--base", nargs="+", required=True)
     parser.add_argument("--new", nargs="+", required=True)
     parser.add_argument("--json", help="結果を JSON で保存")
+    parser.add_argument("--decide", metavar="METRIC",
+                        help="最終行に VERDICT=<判定> を出す（主指標 METRIC ＋ kills・被ダメージの悪化確認）")
     args = parser.parse_args()
     rows = compare(load_episodes(args.base), load_episodes(args.new))
 
@@ -189,6 +199,8 @@ def main() -> None:
         print(f"{'':<24}基準 {_fmt(r['base'])}  変更後 {_fmt(r['new'])}")
     if args.json:
         Path(args.json).write_text(json.dumps(rows, indent=2, ensure_ascii=False, default=str))
+    if args.decide:
+        print(f"VERDICT={decide(rows, args.decide)}")
 
 
 if __name__ == "__main__":

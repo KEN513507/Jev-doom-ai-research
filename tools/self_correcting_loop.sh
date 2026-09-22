@@ -42,6 +42,16 @@ if [ "$CHAMPION_SCORE" = "-999999.00" ]; then
     exit 1
 fi
 CHAMPION_CRITERIA="$CURRENT_CRITERIA"
+# 改善2: 採否は compare_reports.py の効果量で判定する。champion のレポート（保留時は seed+5 の追加分も）を保持
+CHAMPION_REPORTS=("$LOG_DIR/champion.json")
+EXTEND_SEED=$((SEED + 5))  # 保留時の追加5エピソードの seed（エピソード i は EXTEND_SEED+i）
+
+# 効果量で判定し、判定語（改善候補/保留（追加実走）/効果なし/悪化候補/判定不可）を返す。比較表は $1 に保存
+judge() {
+    local out="$1"; shift
+    python tools/compare_reports.py --decide score "$@" > "$out" 2>&1
+    sed -n 's/^VERDICT=//p' "$out" | tail -n 1
+}
 log "Champion: criteria=$CHAMPION_CRITERIA, score=$CHAMPION_SCORE"
 
 # チャンピオンのコードをタグ付け
@@ -128,24 +138,47 @@ $(cat "$LOG_DIR/iter${i}_next.md")
     cp experiments/auto_logs/latest_report.json "$LOG_DIR/iter${i}_result.json" 2>/dev/null || true
 
     NEW_SCORE=$(python tools/score_report.py "$LOG_DIR/iter${i}_result.json")
-    
-    log "  New score: $NEW_SCORE (Champion: $CHAMPION_SCORE)"
-    
-    # --- Step 4: 比較 & 判定 ---
-    log "[4/4] Comparing..."
-    BETTER=$(python -c "print('yes' if float('$NEW_SCORE') > float('$CHAMPION_SCORE') else 'no')")
-    
-    if [ "$BETTER" = "yes" ]; then
-        log "  ✅ 改善！新チャンピオン: $NEXT_CRITERIA"
+    log "  New score: $NEW_SCORE (Champion: $CHAMPION_SCORE、参考値。採否は効果量で判定)"
+
+    # --- Step 4: 効果量で判定（docs/test_items.md の判定ルール）---
+    log "[4/4] Comparing (effect size)..."
+    NEW_REPORTS=("$LOG_DIR/iter${i}_result.json")
+    if [ "$NEW_SCORE" = "-999999.00" ]; then
+        VERDICT="判定不可"
+    else
+        VERDICT=$(judge "$LOG_DIR/iter${i}_compare.txt" --base "${CHAMPION_REPORTS[@]}" --new "${NEW_REPORTS[@]}")
+    fi
+    log "  判定 (n=5): $VERDICT  （比較表: $LOG_DIR/iter${i}_compare.txt）"
+
+    if [ "$VERDICT" = "保留（追加実走）" ]; then
+        # 両条件に seed+5 の5エピソードを追加し n=10 で再判定。champion の追加分は一度走らせたら使い回す
+        if [ "${#CHAMPION_REPORTS[@]}" -lt 2 ]; then
+            log "  保留 → champion ($CHAMPION_CRITERIA) を seed $EXTEND_SEED で5エピソード追加"
+            SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$CHAMPION_CRITERIA" --scenario "$SCENARIO" --seed "$EXTEND_SEED" > "$LOG_DIR/champion_ext_run.log" 2>&1 || true
+            cp experiments/auto_logs/latest_report.json "$LOG_DIR/champion_ext.json"
+            CHAMPION_REPORTS+=("$LOG_DIR/champion_ext.json")
+        fi
+        log "  保留 → $NEXT_CRITERIA を seed $EXTEND_SEED で5エピソード追加"
+        SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$NEXT_CRITERIA" --scenario "$SCENARIO" --seed "$EXTEND_SEED" > "$LOG_DIR/iter${i}_run_ext.log" 2>&1 || true
+        cp experiments/auto_logs/latest_report.json "$LOG_DIR/iter${i}_result_ext.json"
+        NEW_REPORTS+=("$LOG_DIR/iter${i}_result_ext.json")
+        VERDICT=$(judge "$LOG_DIR/iter${i}_compare_n10.txt" --base "${CHAMPION_REPORTS[@]}" --new "${NEW_REPORTS[@]}")
+        log "  判定 (n=10): $VERDICT"
+        [ "$VERDICT" = "保留（追加実走）" ] && VERDICT="効果なし" && log "  n=10 でも保留 → 効果なしとして扱う"
+    fi
+
+    if [ "$VERDICT" = "改善候補" ]; then
+        log "  ✅ 改善候補。新チャンピオン: $NEXT_CRITERIA"
         CHAMPION_SCORE="$NEW_SCORE"
         CHAMPION_CRITERIA="$NEXT_CRITERIA"
+        CHAMPION_REPORTS=("${NEW_REPORTS[@]}")
         cp "$LOG_DIR/iter${i}_result.json" "$LOG_DIR/champion.json"
         git add train/jev_agent.py
-        git commit -m "champion: $NEXT_CRITERIA score=$NEW_SCORE" 2>/dev/null || true
+        git commit -m "champion: $NEXT_CRITERIA (effect size: 改善候補, score=$NEW_SCORE)" 2>/dev/null || true
         git tag -f "champion" HEAD >/dev/null
         CONSECUTIVE_FAIL=0
     else
-        log "  ❌ 悪化。ロールバック"
+        log "  ❌ $VERDICT。ロールバック"
         git stash push -m "loop-rollback: $LOG_DIR iter ${i:-?}" -- train/jev_agent.py >/dev/null || git checkout train/jev_agent.py
         CONSECUTIVE_FAIL=$((CONSECUTIVE_FAIL + 1))
     fi

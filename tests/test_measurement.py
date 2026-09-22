@@ -119,5 +119,23 @@ class TestCompare(unittest.TestCase):
         self.assertEqual(rows["kills"]["new"], [5.0, 6.0, 5.0])
 
 
+class TestDecide(unittest.TestCase):
+    def _rows(self, **verdicts):
+        return [{"metric": m, "verdict": v} for m, v in verdicts.items()]
+
+    def test_primary_verdict_is_used(self):
+        self.assertEqual(compare.decide(self._rows(score="改善候補", kills="効果なし", damage_taken="効果なし")),
+                         "改善候補")
+        self.assertEqual(compare.decide(self._rows(score="保留（追加実走）")), "保留（追加実走）")
+
+    def test_guard_overrides_primary(self):
+        # スコアが上がっても被ダメージが悪化候補なら採用しない
+        self.assertEqual(compare.decide(self._rows(score="改善候補", damage_taken="悪化候補")), "悪化候補")
+        self.assertEqual(compare.decide(self._rows(score="改善候補", kills="悪化候補")), "悪化候補")
+
+    def test_missing_primary(self):
+        self.assertEqual(compare.decide([]), "判定不可")
+
+
 if __name__ == "__main__":
     unittest.main()
