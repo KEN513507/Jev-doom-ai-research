@@ -2,6 +2,7 @@
 
 API key is read from TYPESAFE_API_KEY environment variable only.
 """
+import math
 import os
 import time
 from collections import deque
@@ -34,6 +35,10 @@ try:
         MIN_ENEMY_WIDTH,
         AreaStagnationDetector,
         ForwardBlockDetector,
+        UseFailDetector,
+        WALL_NEAR_DEPTH,
+        center_depth,
+        door_wait_verdict,
         WallAvoider,
         compute_red_metrics,
         build_state_text,
@@ -52,6 +57,10 @@ except ImportError:  # python train/jev_agent.py 直接実行時
         MIN_ENEMY_WIDTH,
         AreaStagnationDetector,
         ForwardBlockDetector,
+        UseFailDetector,
+        WALL_NEAR_DEPTH,
+        center_depth,
+        door_wait_verdict,
         WallAvoider,
         compute_red_metrics,
         build_state_text,
@@ -189,6 +198,21 @@ CRITERIA_SETS = {
     "tactical_peeking": {
         "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path.",
         "use": "Select 'use' ONLY when 'front_blocked=yes' to open doors or operate switches.",
+        # 修正A: "PRIMARY DODGE ACTION" を削除。敵が中央にいないときは逃げずに中央へ寄せる
+        "move_left": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=left, strafe left toward centering. Also use to peek around corners when no enemy is visible.",
+        "move_right": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=right, strafe right toward centering. Also use to peek around corners when no enemy is visible.",
+        "turn_left": "If enemy_visible=yes and enemy_side=left, turn left toward the enemy to center it. Otherwise rotate to check corners.",
+        "turn_right": "If enemy_visible=yes and enemy_side=right, turn right toward the enemy to center it. Otherwise rotate to check corners.",
+        "attack": "Fire whenever enemy_visible=yes. Do not wait for centering. Do NOT attack if no enemy is visible.",
+        # ★ 複合アクション: 動きながら撃つ（被弾リスクが高い時だけ）
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Use ONLY when enemy_centered=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy).",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Use ONLY when enemy_centered=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy).",
+        "advance_attack": "Advance AND fire simultaneously. Use to close distance on a centered enemy while maintaining pressure.",
+    },
+    # 修正A を入れる前の tactical_peeking（A/B 切り分け用。B のみの実走で使う）
+    "tactical_peeking_v0": {
+        "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path.",
+        "use": "Select 'use' ONLY when 'front_blocked=yes' to open doors or operate switches.",
         "move_left": (
             "PRIMARY DODGE ACTION. "
             "Strafe left without firing to dodge or peek when the enemy is not centered. "
@@ -206,7 +230,6 @@ CRITERIA_SETS = {
         "turn_left": "Rotate to check corners and align aim with enemies.",
         "turn_right": "Rotate to check corners and align aim with enemies.",
         "attack": "Fire ONLY when enemy_centered=yes AND no dodge needed. If health (var0) < 70 OR enemy_types includes ChaingunGuy, prefer strafe_attack_left or strafe_attack_right to dodge WHILE firing. Only use plain 'attack' when health is high and enemy is slow.",
-        # ★ 複合アクション: 動きながら撃つ（circle-strafe）
         "strafe_attack_left": "PRIMARY COMBAT ACTION. Strafe left AND fire simultaneously. Use when enemy_centered=yes to dodge incoming fire while keeping damage output.",
         "strafe_attack_right": "PRIMARY COMBAT ACTION. Strafe right AND fire simultaneously. Use when enemy_centered=yes to dodge incoming fire while keeping damage output.",
         "advance_attack": "Advance AND fire simultaneously. Use to close distance on a centered enemy while maintaining pressure.",
@@ -432,13 +455,15 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
     }
 
 
-def execute_action(game, action_vec, frame_skip, *, tap=False):
-    """tap=True なら 1tic だけ押して残りは離す（USE は押した瞬間しか作動せず、押しっぱなしでは再作動しない）"""
-    if not tap:
+def execute_action(game, action_vec, frame_skip, *, tap=False, press_tics=None):
+    """tap=True なら 1tic だけ押して残りは離す（USE は押した瞬間しか作動せず、押しっぱなしでは再作動しない）。
+    press_tics を指定すると、その tic 数だけ押して残りは離す（慎重な前進用）"""
+    press = 1 if tap else (press_tics or frame_skip)
+    if press >= frame_skip:
         return game.make_action(action_vec, frame_skip)
-    reward = game.make_action(action_vec, 1)
-    if frame_skip > 1 and not game.is_episode_finished():
-        reward += game.make_action([0] * len(action_vec), frame_skip - 1)
+    reward = game.make_action(action_vec, press)
+    if not game.is_episode_finished():
+        reward += game.make_action([0] * len(action_vec), frame_skip - press)
     return reward
 
 
@@ -551,6 +576,15 @@ def write_status(lines: list[str], path: str = STATUS_FILE) -> None:
 
 
 
+# 付け焼き刃: スタック判定（STUCK_TICS の間に STUCK_MOVE_EPS 単位以上動かなければ脱出）
+STUCK_TICS = 30
+STUCK_MOVE_EPS = 8.0
+ESCAPE_STEPS = 4  # 脱出行動を続ける判断ステップ数（frame_skip=4 で 16tic）
+ESCAPE_ORDER = ("move_right", "move_left", "move_backward")
+# 敵が見えない間の move_forward は frame_skip のうちこの tic 数だけ押す（周囲を確認しながら小刻みに進む）
+CAUTIOUS_FORWARD_TICS = 3
+
+
 def main():
     global ACTION_BUTTONS  # ← この行を追加
     import argparse
@@ -578,6 +612,11 @@ def main():
         type=float,
         default=MIN_ENEMY_WIDTH,
         help="視認とみなす最小ラベル幅px（--use-labels時のみ有効）",
+    )
+    parser.add_argument(
+        "--no-door-fix",
+        action="store_true",
+        help="修正B（use 失敗検出・ドア待機の早期解除）を無効化（A/B 切り分け用）",
     )
     parser.add_argument(
         "--sound",
@@ -619,6 +658,7 @@ def main():
     if full_map:
         game.load_config(f"{vzd.scenarios_path}/{full_map['cfg']}")
         game.set_doom_map(full_map["map"])
+        game.set_doom_skill(full_map["skill"])  # 全滅目標（monsters_total）はこの難易度の敵数
         # deadly_corridor.cfg 相当に揃える（game_vars[0]=HEALTH 前提、HUD/フラッシュは red_mean を乱す）
         game.set_available_buttons([getattr(vzd.Button, b) for b in scenario_buttons])
         game.set_available_game_variables([vzd.GameVariable.HEALTH])
@@ -630,6 +670,11 @@ def main():
         game.load_config(f"{vzd.scenarios_path}/{args.scenario}.cfg")
     # 撃破数を取得（cfg書き換え不要。HEALTH の後に KILLCOUNT が追加される）
     game.add_available_game_variable(vzd.GameVariable.KILLCOUNT)
+    # 弾消費メトリクス用（SELECTED_WEAPON_AMMO）。登録に失敗しても本編は動く
+    try:
+        game.add_available_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)
+    except Exception:
+        pass
     try:
         game.add_available_game_variable(vzd.GameVariable.POSITION_Z)
     except Exception:
@@ -702,6 +747,19 @@ def main():
         GRID_SIZE = 128
         stagnation_detector = AreaStagnationDetector() if sys3 is not None else None
         order = None
+        # 付け焼き刃: スタック脱出の状態
+        _last_pos = None
+        _stuck_since = 0
+        _escape_dir = None
+        _escape_left = 0
+        # 修正B: use の失敗検出とドア待機開始時の前方深度（--no-door-fix で無効）
+        use_fail = None if args.no_door_fix else UseFailDetector()
+        _door_depth = None
+        # 弾消費の計測（武器が変わったステップの増減は数えない）
+        ammo_used = 0
+        attack_steps = 0
+        _prev_ammo = None
+        _prev_weapon = None
 
         while not game.is_episode_finished():
             # 判断フレームのみ get_state() を呼ぶ
@@ -710,6 +768,8 @@ def main():
                 if state is None:
                     break
                 sys1_events = []  # オーバーレイ用: このステップで反射層が動いた記録
+                turn_move = False  # 付け焼き刃: 旋回に前進を同時押しするか
+                cautious = False  # 敵不在の前進を小刻みにするか
                 game_vars = list(state.game_variables)
                 health = game_vars[0] if game_vars else 0
                 if len(game_vars) > 1:
@@ -820,6 +880,24 @@ def main():
                     print(f"[skip] {e}")
                     jev_line = f"[skip] {str(e)[:60]}"
 
+                # 付け焼き刃: STUCK_TICS の間ほぼ動かなければ 右→左→後退 の順に脱出を試す。
+                # ドア待機中（意図的な停止）と敵視認中（立ち止まって撃つのが正常）は数えない
+                enemy_now = info is not None and info.get("enemy_visible")
+                if (enemy_now or door_waiter.is_waiting() or _last_pos is None
+                        or math.dist(position, _last_pos) > STUCK_MOVE_EPS):
+                    _last_pos, _stuck_since = position, tic_counter
+                elif _escape_left == 0 and tic_counter - _stuck_since >= STUCK_TICS:
+                    dirs = [d for d in ESCAPE_ORDER if d in ACTION_BUTTONS]
+                    if dirs:
+                        _escape_dir = dirs[(dirs.index(_escape_dir) + 1) % len(dirs)] if _escape_dir in dirs else dirs[0]
+                        _escape_left = ESCAPE_STEPS
+                        _stuck_since = tic_counter
+                        print(f"step={tic_counter} [Stuck] {STUCK_TICS}tic 停止 -> {_escape_dir}")
+                if _escape_left > 0:
+                    _escape_left -= 1
+                    sys1_events.append(f"Stuck: {choice} -> {_escape_dir}")
+                    choice = _escape_dir
+
                 # 反射層（Jev の判断の後）：壁に向かう前進を止める。地点ごとに use 1回、以後は開けた側へ旋回
                 if wall_avoider is not None:
                     steered = wall_avoider.filter(choice, state.depth_buffer, position, front_blocked)
@@ -828,6 +906,45 @@ def main():
                         sys1_events.append(f"WallAvoider: {choice} -> {steered}")
                         choice = steered
 
+                # 修正B: ドア待機の早期解除（開いたら即再開、変化がなければドアではない）
+                if (not args.no_door_fix and door_waiter.is_waiting() and _door_depth is not None
+                        and state.depth_buffer is not None):
+                    waited = door_waiter.total_wait - door_waiter.wait_remaining
+                    verdict = door_wait_verdict(_door_depth, center_depth(state.depth_buffer), waited)
+                    if verdict is not None:
+                        door_waiter.reset()
+                        print(f"step={tic_counter} [DoorWait] {verdict} ({waited}tic) -> resume")
+
+                # 修正B: 同じ地点で use が続けて失敗（その場に留まっている）したら turn_right で離れる
+                if use_fail is not None:
+                    steered = use_fail.filter(choice, position)
+                    if steered != choice:
+                        print(f"step={tic_counter} [UseFail] repeated use at same spot -> {steered}")
+                        sys1_events.append(f"UseFail: {choice} -> {steered}")
+                        choice = steered
+
+                # 弾消費: 同じ武器のまま弾が減った分を数える（拾った分・持ち替えは除外）
+                weapon = game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON)
+                ammo = game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)
+                if _prev_ammo is not None and weapon == _prev_weapon and ammo < _prev_ammo:
+                    ammo_used += int(_prev_ammo - ammo)
+                _prev_ammo, _prev_weapon = ammo, weapon
+
+                # 付け焼き刃: 敵不在の旋回は前進も同時押しし、その場で回り続けず弧を描いて進む。
+                # 敵視認中（照準合わせ）・脱出中・前方が壁（WallAvoider の旋回を含む）は変更しない
+                if (choice in ("turn_left", "turn_right") and not enemy_now and _escape_left == 0
+                        and not front_blocked and state.depth_buffer is not None):
+                    d = state.depth_buffer
+                    h, w = d.shape
+                    if np.median(d[h // 2 - 3:h // 2 + 3, w * 2 // 5:w * 3 // 5]) > WALL_NEAR_DEPTH:
+                        turn_move = True
+                        print(f"step={tic_counter} [TurnMove] {choice} + MOVE_FORWARD")
+                        sys1_events.append(f"TurnMove: {choice} + MOVE_FORWARD")
+
+                # 敵が見えないまま前進し続けないよう、敵不在の move_forward は小刻みにする
+                if choice == "move_forward" and not enemy_now:
+                    cautious = True
+
                 write_status(format_status(
                     jev_line=jev_line, reason=reason, sys1_events=sys1_events,
                     order=order, health=health, info=info, tic=tic_counter,
@@ -835,6 +952,10 @@ def main():
 
             # 候補登録と同じ辞書を使い、複合の全ボタンを同時押しする。
             action_vec[:] = build_action_vector(choice, button_names, ACTION_BUTTONS)
+            if "ATTACK" in button_names and action_vec[button_names.index("ATTACK")] and not door_waiter.is_waiting():
+                attack_steps += 1
+            if turn_move and "MOVE_FORWARD" in button_names:
+                action_vec[button_names.index("MOVE_FORWARD")] = 1
             target = ACTION_BUTTONS[choice]
 
             # ドア待機中は前進・旋回を抑制
@@ -846,11 +967,14 @@ def main():
             else:
                 # フレームスキップで進める（USE はタップ）
                 last_reward = execute_action(
-                    game, action_vec, frame_skip, tap=(target == "USE")
+                    game, action_vec, frame_skip, tap=(target == "USE"),
+                    press_tics=CAUTIOUS_FORWARD_TICS if cautious else None,
                 )
                 # ─── use 実行後にドア待機開始（実行前に start すると同ステップで待機に入り USE が消える）───
                 if target == "USE":
                     door_waiter.start()
+                    _door_depth = (center_depth(state.depth_buffer)
+                                   if state is not None and state.depth_buffer is not None else None)
             tic_counter += frame_skip
 
         # P1: エピソード終了時の被弾サマリー
@@ -895,7 +1019,10 @@ def main():
               f"max_distance={world_memory.max_distance:.0f}, "
               f"keys={len(world_memory.keys_obtained)}, "
               f"dead_ends={len(world_memory.dead_ends)}, "
-              f"i_exit={i_exit}")
+              f"i_exit={i_exit}, "
+              f"kills_total={full_map['monsters_total'] if full_map else 0}, "
+              f"ammo_used={ammo_used}, attack_steps={attack_steps}, "
+              f"dmg_hits={int(game.get_game_variable(vzd.GameVariable.HITCOUNT))}")
         episode += 1
 
     if sys3 is not None:

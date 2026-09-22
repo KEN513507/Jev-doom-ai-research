@@ -486,6 +486,12 @@ class TestExecuteAction(unittest.TestCase):
         execute_action(game, [1, 0, 0], 4)
         self.assertEqual(game.calls, [([1, 0, 0], 4)])
 
+    def test_press_tics_presses_part_then_releases(self):
+        # 慎重な前進: 8tic のうち 3tic だけ押す
+        game = _FakeGame()
+        execute_action(game, [1, 0, 0], 8, press_tics=3)
+        self.assertEqual(game.calls, [([1, 0, 0], 3), ([0, 0, 0], 5)])
+
 
 if __name__ == "__main__":
     unittest.main()
