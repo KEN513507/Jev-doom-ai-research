@@ -1,0 +1,22 @@
+{
+  "diagnosis": "Sys1とSys2の呼び出し比率は約1:1と良好に機能しているが、全エピソードで遭遇直後（Step 16-20）および中盤（Step 48前後）に回避のない撃ち合いによる大ダメージ（30-48HP）を被弾している。",
+  "sys_balance": {
+    "status": "healthy",
+    "comment": "sys2_ratioが51.7%であり、Jevの判断機会が確保されつつSystem 1の反射も連動しておりバランスは健全。"
+  },
+  "primary_issue": "aggressive_p1の評価基準により敵視認時に棒立ち・直進攻撃を選択し、被弾回避（strafe/退避）の優先度が著しく低くなっている。",
+  "root_cause_hypothesis": "System 1の「即attack」発動後、次ステップでJev（aggressive_p1）に制御が戻った際、Jevが距離調整や遮蔽確保ではなく追撃を選択し、敵の反撃（特にChaingunGuyの連射）を直接受け止めている。",
+  "recommended_actions": [
+    {
+      "priority": 1,
+      "action_type": "criteria_edit",
+      "target_file": "train/jev_agent.py",
+      "description": "CRITERIA_SETSに被弾抑止と側方移動（strafe）による射線外しを評価する新基準 'tactical_p1' を追加し、交戦時の生存行動に対する重みを引き上げる。",
+      "expected_effect": "Sys1による初撃後のJev判断において、攻撃一辺倒から回避・間合い管理が選択され、初回交戦（Step 16-20）の被弾ダメージが大幅に軽減される。",
+      "risk": "消極的な行動（逃亡継続）が増え、敵撃破までのステップ数が延びる可能性がある。"
+    }
+  ],
+  "next_iteration_command": "python train/jev_agent.py --criteria defensive --use-labels",
+  "should_stop": false,
+  "stop_reason": null
+}

@@ -1,0 +1,105 @@
+{
+  "criteria": "tactical_p4",
+  "log_path": "/home/ken/projects/_Jev/doom-ai-research/experiments/auto_logs/run_tactical_p4_20260922_172653.log",
+  "episodes": [
+    {
+      "episode": 0,
+      "hits": 3,
+      "final_health": 28,
+      "steps": 76,
+      "sys1": 5,
+      "sys2": 14
+    },
+    {
+      "episode": 1,
+      "hits": 3,
+      "final_health": 28,
+      "steps": 84,
+      "sys1": 6,
+      "sys2": 15
+    },
+    {
+      "episode": 2,
+      "hits": 3,
+      "final_health": 22,
+      "steps": 84,
+      "sys1": 6,
+      "sys2": 15
+    }
+  ],
+  "hits_events": [
+    {
+      "num": 1,
+      "step": 12,
+      "before": 100,
+      "after": 88,
+      "damage": 12
+    },
+    {
+      "num": 2,
+      "step": 16,
+      "before": 88,
+      "after": 82,
+      "damage": 6
+    },
+    {
+      "num": 3,
+      "step": 44,
+      "before": 82,
+      "after": 28,
+      "damage": 54
+    },
+    {
+      "num": 1,
+      "step": 20,
+      "before": 100,
+      "after": 58,
+      "damage": 42
+    },
+    {
+      "num": 2,
+      "step": 52,
+      "before": 58,
+      "after": 34,
+      "damage": 24
+    },
+    {
+      "num": 3,
+      "step": 80,
+      "before": 34,
+      "after": 28,
+      "damage": 6
+    },
+    {
+      "num": 1,
+      "step": 12,
+      "before": 100,
+      "after": 88,
+      "damage": 12
+    },
+    {
+      "num": 2,
+      "step": 20,
+      "before": 88,
+      "after": 70,
+      "damage": 18
+    },
+    {
+      "num": 3,
+      "step": 52,
+      "before": 70,
+      "after": 22,
+      "damage": 48
+    }
+  ],
+  "summary": {
+    "n_episodes": 3,
+    "avg_hits": 3.0,
+    "avg_health": 26.0,
+    "avg_steps": 81.33333333333333,
+    "avg_sys1": 5.666666666666667,
+    "avg_sys2": 14.666666666666666,
+    "total_hits": 9,
+    "sys2_ratio": 0.7213114754098361
+  }
+}

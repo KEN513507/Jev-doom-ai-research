@@ -1,0 +1,119 @@
+{
+  "criteria": "tactical_p2",
+  "log_path": "/home/ken/projects/_Jev/doom-ai-research/experiments/auto_logs/run_tactical_p2_20260922_171715.log",
+  "episodes": [
+    {
+      "episode": 0,
+      "hits": 3,
+      "final_health": 4,
+      "steps": 252,
+      "sys1": 26,
+      "sys2": 37
+    },
+    {
+      "episode": 1,
+      "hits": 4,
+      "final_health": 16,
+      "steps": 172,
+      "sys1": 8,
+      "sys2": 35
+    },
+    {
+      "episode": 2,
+      "hits": 4,
+      "final_health": 4,
+      "steps": 188,
+      "sys1": 13,
+      "sys2": 34
+    }
+  ],
+  "hits_events": [
+    {
+      "num": 1,
+      "step": 16,
+      "before": 100,
+      "after": 46,
+      "damage": 54
+    },
+    {
+      "num": 2,
+      "step": 104,
+      "before": 46,
+      "after": 28,
+      "damage": 18
+    },
+    {
+      "num": 3,
+      "step": 136,
+      "before": 28,
+      "after": 4,
+      "damage": 24
+    },
+    {
+      "num": 1,
+      "step": 12,
+      "before": 100,
+      "after": 58,
+      "damage": 42
+    },
+    {
+      "num": 2,
+      "step": 144,
+      "before": 58,
+      "after": 34,
+      "damage": 24
+    },
+    {
+      "num": 3,
+      "step": 152,
+      "before": 34,
+      "after": 22,
+      "damage": 12
+    },
+    {
+      "num": 4,
+      "step": 156,
+      "before": 22,
+      "after": 16,
+      "damage": 6
+    },
+    {
+      "num": 1,
+      "step": 16,
+      "before": 100,
+      "after": 52,
+      "damage": 48
+    },
+    {
+      "num": 2,
+      "step": 156,
+      "before": 52,
+      "after": 46,
+      "damage": 6
+    },
+    {
+      "num": 3,
+      "step": 176,
+      "before": 46,
+      "after": 34,
+      "damage": 12
+    },
+    {
+      "num": 4,
+      "step": 184,
+      "before": 34,
+      "after": 4,
+      "damage": 30
+    }
+  ],
+  "summary": {
+    "n_episodes": 3,
+    "avg_hits": 3.6666666666666665,
+    "avg_health": 8.0,
+    "avg_steps": 204.0,
+    "avg_sys1": 15.666666666666666,
+    "avg_sys2": 35.333333333333336,
+    "total_hits": 11,
+    "sys2_ratio": 0.69281045751634
+  }
+}

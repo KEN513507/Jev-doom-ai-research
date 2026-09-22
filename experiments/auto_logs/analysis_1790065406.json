@@ -1,0 +1,22 @@
+{
+  "diagnosis": "System 2（Jev）の稼働率は約88.6%と高く判断は機能しているが、一度敵に捕捉されると短間隔（4〜12ステップ）で連続被弾し致命傷に至っている。",
+  "sys_balance": {
+    "status": "healthy",
+    "comment": "sys2比率が約88.6%であり、System 1による過度な介入なくJev主導の意思決定サイクルが維持できている。"
+  },
+  "primary_issue": "被弾発生後の連続被弾（被弾直後の緊急退避・射線切り判断の遅れ）",
+  "root_cause_hypothesis": "Jev APIのレイテンシ（250ms）に加え、tactical_p2のcriteriaにおいて敵視認時の『即時回避・遮蔽への移動』に対する評価ウェイトが低く、被弾中も攻撃や接近行動を優先・維持してしまっている。",
+  "recommended_actions": [
+    {
+      "priority": 1,
+      "action_type": "criteria_edit",
+      "target_file": "train/jev_agent.py",
+      "description": "CRITERIA_SETSに'tactical_p3'を追加。tactical_p2をベースに、ヘルス低下時および敵近接時の回避行動（strafe/backward）および被弾回避へのペナルティ/報酬ウェイトを強化する。",
+      "expected_effect": "被弾直後の連続ダメージが抑制され、エピソード生存時間および最終体力が向上する。",
+      "risk": "回避を優先しすぎて敵撃破が遅れ、長期的には敵に包囲されるリスクがある。"
+    }
+  ],
+  "next_iteration_command": "python train/jev_agent.py --criteria tactical_p3 --use-labels",
+  "should_stop": false,
+  "stop_reason": ""
+}
