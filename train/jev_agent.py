@@ -10,12 +10,14 @@ import requests
 import vizdoom as vzd
 
 
+try:
+    from train.state_utils import compute_red_metrics, build_state_text
+except ImportError:  # python train/jev_agent.py 直接実行時
+    from state_utils import compute_red_metrics, build_state_text
+
+
 JEV_API_URL = "https://api.typesafe.ai/v1/systemone"
 JEV_MODEL = "jev-latest"
-
-# screen_buffer 赤チャネル平均がこの値を超えたら「敵が見える」とみなす。
-# 要調整（実機ログの red 値を見てキャリブレーションすること）。
-ENEMY_RED_THRESHOLD = 100.0
 
 # 接続を使い回す（毎回新規接続だと ~800ms に逆戻りするため最重要）
 _SESSION = requests.Session()
@@ -82,38 +84,16 @@ def extract_choice_and_probs(jev_response: dict) -> tuple[str, dict]:
     return choice, probs
 
 
-def state_to_text(state, game_vars: list) -> str:
-    """ViZDoom の状態を Jev が理解できる豊富なテキストに変換する。
+def state_to_text(state, game_vars: list) -> tuple[str, float, bool]:
+    """ViZDoom の状態を Jev が理解できるテキストに変換する。
 
-    注意: game_variables の中身はシナリオ依存（basic.cfg は AMMO2 のみ、
-    deadly_corridor.cfg は HEALTH のみ）。health と決め打ちせず、
-    汎用名で渡し、文脈文でゲーム目的を明示する。
+    赤平均の定義は train/state_utils.py に集約（calib と共用）。
+    注意: game_variables の中身はシナリオ依存のため health と決め打ちしない。
     """
-    parts = []
-    for i, v in enumerate(game_vars):
-        try:
-            parts.append(f"var{i}={float(v):.0f}")
-        except (TypeError, ValueError):
-            parts.append(f"var{i}={v}")
-
-    if state is not None:
-        screen = getattr(state, "screen_buffer", None)
-        if screen is not None:
-            try:
-                import numpy as np
-
-                red_mean = float(np.asarray(screen)[0].mean())
-                enemy_visible = red_mean > ENEMY_RED_THRESHOLD
-                parts.append(f"enemy_visible={'yes' if enemy_visible else 'no'}")
-            except Exception:
-                pass
-
-    context = (
-        "You are playing DOOM. "
-        "Your goal is to progress through the level and survive. "
-        "Balance offense and movement."
+    red_mean, enemy_visible = compute_red_metrics(
+        state.screen_buffer if state is not None else None
     )
-    return f"{context} Current state: {', '.join(parts) if parts else 'unknown'}"
+    return build_state_text(game_vars, red_mean, enemy_visible), red_mean, enemy_visible
 
 
 class JevVisualizer:
@@ -169,47 +149,65 @@ def main():
     if not api_key:
         raise EnvironmentError("TYPESAFE_API_KEY is not set")
 
+    # --- 初期化: 極限軽量化 ---
     game = vzd.DoomGame()
     game.load_config(f"{vzd.scenarios_path}/deadly_corridor.cfg")
-    game.set_window_visible(True)
-    game.set_mode(vzd.Mode.PLAYER)
-    game.set_ticrate(4)  # 250ms/tic = median 249ms と一致
+    game.set_window_visible(False)  # ヘッドレス
+    game.set_screen_resolution(vzd.ScreenResolution.RES_160X120)
+    game.set_depth_buffer_enabled(False)
+    game.set_labels_buffer_enabled(False)
+    game.set_automap_buffer_enabled(False)
+    game.set_ticrate(35)
     game.init()
 
     n_buttons = game.get_available_buttons_size()
     button_names = [str(b).split(".")[-1] for b in game.get_available_buttons()]
     print("Available buttons:", button_names)
 
+    # 固定メモリ
+    action_vec = [0] * n_buttons
+    frame_skip = 4  # 1回の make_action で4tic進める（約114ms）
+    decision_interval_tic = 4  # 何ticごとにJevに聞くか
+
     viz = JevVisualizer()
     episode = 0
+    choice = "move_forward"
+    last_reward = 0.0
 
     while episode < 3:  # 3エピソード実行
         game.new_episode()
         print(f"--- Episode {episode} ---")
+        tic_counter = 0
+
         while not game.is_episode_finished():
-            state = game.get_state()
-            game_vars = list(state.game_variables) if state else []
-            health = game_vars[0] if game_vars else 0
+            # 判断フレームのみ get_state() を呼ぶ
+            if tic_counter % decision_interval_tic == 0:
+                state = game.get_state()
+                if state is None:
+                    break
+                game_vars = list(state.game_variables)
+                health = game_vars[0] if game_vars else 0
+                state_text, red_mean, enemy_visible = state_to_text(state, game_vars)
+                try:
+                    jev_resp = get_jev_decision(api_key, state_text, timeout=1.0)
+                    choice, probs = extract_choice_and_probs(jev_resp)
+                    viz.log(probs, last_reward, health)
+                    print(f"step={tic_counter} Jev -> {choice} | "
+                          f"red_mean={red_mean:.1f} | "
+                          f"enemy_visible={'yes' if enemy_visible else 'no'}")
+                except Exception as e:
+                    print(f"[skip] {e}")
 
-            state_text = state_to_text(state, game_vars)
-
-            try:
-                jev_resp = get_jev_decision(api_key, state_text)
-                choice, probs = extract_choice_and_probs(jev_resp)
-                print(f"Jev -> {choice} | probs={probs}")
-            except Exception as e:
-                print(f"Jev API error: {e}. Falling back to random.")
-                choice = "move_forward"
-                probs = {}
-
-            # ボタンベクトルに変換
-            action_vec = [0] * n_buttons
+            # ボタンベクトルを再利用
+            for i in range(n_buttons):
+                action_vec[i] = 0
             target = ACTION_BUTTONS.get(choice, "MOVE_FORWARD")
             if target in button_names:
                 action_vec[button_names.index(target)] = 1
 
-            reward = game.make_action(action_vec)
-            viz.log(probs, reward, health)
+            # フレームスキップで進める
+            last_reward = game.make_action(action_vec, frame_skip)
+            tic_counter += frame_skip
 
         episode += 1
 
