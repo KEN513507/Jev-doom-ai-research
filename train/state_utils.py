@@ -32,6 +32,107 @@ def get_slice():
     return SLICE_CONFIG[USE_RESOLUTION][ACTIVE_REGION]
 
 
+# labels_buffer で敵と判定する種類（deadly_corridor実測：Zombieman, ShotgunGuy, ChaingunGuy）
+ENEMY_NAMES = frozenset({
+    "Zombieman",
+    "ShotgunGuy",
+    "ChaingunGuy",
+    "Imp",
+    "Demon",
+    "Cacodemon",
+    "HellKnight",
+    "Baron",
+    "Revenant",
+    "Arachnotron",
+    "Mancubus",
+    "Archvile",
+})
+
+# 画面中央とみなす許容幅（画面幅に対する割合の半分）
+CENTER_TOLERANCE_RATIO = 0.1  # 0.2 -> 0.1 (実測: 側面の敵を centered=no と正しく判定)
+
+
+def _no_enemy():
+    return {
+        "enemy_visible": False,
+        "enemy_count": 0,
+        "enemy_names": [],
+        "enemy_centered": False,
+        "nearest_enemy_x": None,
+        "nearest_enemy_width": None,
+    }
+
+
+# 視認とみなす最小ラベル幅（px）。これ未満の極小ラベル（遠方・端の敵）は無視する。
+# 実測：Zombieman/ShotgunGuy は幅8以上で出現、ChaingunGuy は幅0で出現。
+MIN_ENEMY_WIDTH = 8.0
+
+
+def detect_enemy_from_labels(state, min_width: float = 0.0) -> dict:
+    """labels_buffer から敵情報を抽出する（red_mean より正確）。
+
+    state が labels を持たない場合（無効時など）は全 False を返す。
+    min_width を指定すると、それ未満の幅のラベルは視認不可として無視する。
+    ただし width==0 のラベルは、x座標が画面内なら有効とする
+    （ChaingunGuy など、ViZDoom のラベル幅が0になるケースへの対応）。
+    """
+    labels = getattr(state, "labels", None) if state is not None else None
+    if not labels:
+        return _no_enemy()
+
+    try:
+        screen_w = float(state.screen_buffer.shape[2])
+    except Exception:
+        screen_w = float(USE_RESOLUTION.split("X")[0])
+
+    enemies = []
+    for lb in labels:
+        if getattr(lb, "object_name", None) not in ENEMY_NAMES:
+            continue
+        if min_width > 0:
+            try:
+                w = float(lb.width)
+            except Exception:
+                continue
+            if w == 0.0:
+                # width==0 でも x が画面内なら有効（ChaingunGuy 等の対応）
+                try:
+                    x = float(lb.x)
+                except Exception:
+                    continue
+                if not 0.0 <= x < screen_w:
+                    continue
+            elif w < min_width:
+                continue
+        enemies.append(lb)
+    if not enemies:
+        return _no_enemy()
+
+    center_x = screen_w / 2.0
+
+    def _center(lb):
+        try:
+            return float(lb.x) + float(lb.width) / 2.0
+        except Exception:
+            return center_x
+
+    nearest = min(enemies, key=lambda lb: abs(_center(lb) - center_x))
+    nearest_center = _center(nearest)
+    try:
+        nearest_width = float(nearest.width)
+    except Exception:
+        nearest_width = None
+
+    return {
+        "enemy_visible": True,
+        "enemy_count": len(enemies),
+        "enemy_names": [lb.object_name for lb in enemies],
+        "enemy_centered": abs(nearest_center - center_x) < screen_w * CENTER_TOLERANCE_RATIO,
+        "nearest_enemy_x": nearest_center,
+        "nearest_enemy_width": nearest_width,
+    }
+
+
 def compute_red_metrics(screen_buffer, threshold: float = ENEMY_RED_THRESHOLD):
     """画面バッファから red_mean と enemy_visible を計算する"""
     if screen_buffer is None:

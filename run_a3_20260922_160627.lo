@@ -1,0 +1,5 @@
+usage: jev_agent.py [-h]
+                    [--criteria {aggressive,aggressive_p0,baseline,defensive,explorer}]
+                    [--use-labels]
+                    [--scenario {basic,deadly_corridor,defend_the_center,defend_the_line,health_gathering,health_gathering_supreme,my_way_home,predict_position,take_cover}]
+jev_agent.py: error: unrecognized arguments: --min-width 8.0

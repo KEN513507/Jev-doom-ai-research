@@ -1,0 +1,22 @@
+{
+  "diagnosis": "Sys2の稼働率は約60%を維持しJevの判断は機能しているが、全エピソードで開幕直後（step 12〜16）に大ダメージ（12〜48）を受けており、初期接敵時の生存戦術が破綻している。",
+  "sys_balance": {
+    "status": "healthy",
+    "comment": "Sys2比率59.7%（Sys1: 10.3回 vs Sys2: 15.3回）であり、System 1の暴走やJevの排除は起きておらず健全な協調バランス。"
+  },
+  "primary_issue": "開幕直後（step 12〜16）におけるChaingunGuy等からの初撃被弾および大ダメージ。",
+  "root_cause_hypothesis": "defensive基準が回避や防衛を過度に重視するため、敵射線からの離脱が間に合わず棒立ち被弾しているか、Sys1発動直後のSys2待機レイテンシ（250ms）中に敵の集中砲火を受けている。",
+  "recommended_actions": [
+    {
+      "priority": 1,
+      "action_type": "criteria_edit",
+      "target_file": "train/jev_agent.py",
+      "description": "CRITERIA_SETS に 'tactical_p1' を追加し、脅威度が最も高い敵の早期無力化と射線切断（遮蔽物利用）を両立させた評価プロンプト/重みを定義する。",
+      "expected_effect": "開幕接敵時の無駄な被弾回避行動を減らし、射撃による敵無力化と安全確保のメリハリをつけて開幕ダメージを抑制する。",
+      "risk": "Sys1との競合が増加し、Sys2比率が低下して反射的攻撃に偏る可能性がある。"
+    }
+  ],
+  "next_iteration_command": "python train/jev_agent.py --criteria tactical_p1 --use-labels",
+  "should_stop": false,
+  "stop_reason": ""
+}

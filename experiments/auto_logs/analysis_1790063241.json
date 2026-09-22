@@ -1,0 +1,30 @@
+{
+  "diagnosis": "Sys2の稼働率は約62%と判断プロセス自体は機能しているが、全エピソードで序盤（Step 12-16）に単発30〜54の大ダメージを受け致命的な状態に陥っている。",
+  "sys_balance": {
+    "status": "healthy",
+    "comment": "Sys2比率62.2%でJevの思考機会は確保されており、交互発動制限（allow_system1）も健全に寄与している。"
+  },
+  "primary_issue": "交戦開始直後（Step 12-16）におけるChaingunGuy等からの高バースト被弾の放置",
+  "root_cause_hypothesis": "aggressive_p1の評価関数が敵接近や攻撃を過度に重視しており、射線（LoS）に入った瞬間にJevが回避・遮蔽確保ではなく攻撃/前進を選択し、250msのレイテンシ中に連射を浴びている。",
+  "recommended_actions": [
+    {
+      "priority": 1,
+      "action_type": "criteria_edit",
+      "target_file": "train/jev_agent.py",
+      "description": "CRITERIA_SETSに'tactical_p1'を追加。攻撃優先度を保ちつつ、被弾リスク（低ヘルス維持ペナルティや敵射線露出ペナルティ、横移動/退避行動の評価）を高めたcriteriaを定義する。",
+      "expected_effect": "交戦初動で敵の射線から外れる・横移動する判断がSys2で選ばれやすくなり、Step 12-20の特大ダメージが激減する。",
+      "risk": "消極的になりすぎて接敵・撃破までのステップ数が延びる可能性がある。"
+    },
+    {
+      "priority": 2,
+      "action_type": "criteria_edit",
+      "target_file": "train/jev_agent.py",
+      "description": "比較対象として既存の'defensive' criteriaでのベンチマークを実行し、Sys2の判断傾向の違いを定量評価する。",
+      "expected_effect": "criteria変更がJevの行動選択（Sys2の判断）に与える影響が明確になる。",
+      "risk": "特になし。"
+    }
+  ],
+  "next_iteration_command": "python train/jev_agent.py --criteria defensive --use-labels",
+  "should_stop": false,
+  "stop_reason": null
+}

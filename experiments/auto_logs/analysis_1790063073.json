@@ -1,0 +1,30 @@
+{
+  "diagnosis": "System 2の関与率は約62%と判断プロセスは機能しているが、接敵初期（12〜20ステップ）で大ダメージを連続被弾し体力が危険域まで削られている。",
+  "sys_balance": {
+    "status": "healthy",
+    "comment": "Sys2のコール比率は62%でJevの判断機会は十分に確保されており、System 1による完全な乗っ取りは防げている。"
+  },
+  "primary_issue": "接敵初期（Step 12-20）における連続被弾（1発あたり30〜54ダメージ）の抑制",
+  "root_cause_hypothesis": "Sys1が1ステップで解除される仕様により、至近距離の脅威を排除・無力化しきる前にSys2（レイテンシ250ms）へ戻り、かつ aggressive_p1 プロンプトが被弾回避や遮蔽物利用より攻撃継続を優先しているため。",
+  "recommended_actions": [
+    {
+      "priority": 1,
+      "action_type": "criteria_edit",
+      "target_file": "prompts/criteria_aggressive_p1.txt または criteria 定義ファイル",
+      "description": "criteria に「敵の射線を避ける横移動（strafing）」または「被弾直後の緊急回避・遮蔽意識」の重み付けを追加し、攻撃姿勢を維持しつつ被弾を減らせるか検証する。",
+      "expected_effect": "Sys2が攻撃一辺倒ではなくstrafing/hit-and-runを選択し、ステップ12〜20付近の致命打を回避する。",
+      "risk": "消極的な行動が増え、撃破効率の低下やSystem 1発動回数の偏りが生じる可能性。"
+    },
+    {
+      "priority": 2,
+      "action_type": "code_edit",
+      "target_file": "train/jev_agent.py",
+      "description": "allow_system1 の強制トグル条件を緩和し、ChaingunGuy等の即時脅威が存在する間はSys1の継続攻撃（2〜3ステップのバースト射撃）を許容する。",
+      "expected_effect": "接敵直後の被弾リスク（特に即弾系エネミーからの54ダメージ等）を速やかに低減する。",
+      "risk": "Sys1の占有率が上がり、Sys2（Jev）の判断機会が減少するリスク。"
+    }
+  ],
+  "next_iteration_command": "python run_experiment.py --criteria aggressive_p1_strafe --episodes 3",
+  "should_stop": false,
+  "stop_reason": null
+}
