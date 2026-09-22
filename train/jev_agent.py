@@ -23,19 +23,35 @@ try:
     from train.state_utils import (
         ENEMY_RED_THRESHOLD,
         MIN_ENEMY_WIDTH,
+        AreaStagnationDetector,
         ForwardBlockDetector,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
+        extract_key_events,
+    )
+    from train.system3_core import (
+        TRIGGER_AREA_STAGNATION,
+        TRIGGER_FRONT_BLOCKED,
+        TRIGGER_KEY_EVENT,
+        StrategicCoreSystem3,
     )
 except ImportError:  # python train/jev_agent.py 直接実行時
     from state_utils import (
         ENEMY_RED_THRESHOLD,
         MIN_ENEMY_WIDTH,
+        AreaStagnationDetector,
         ForwardBlockDetector,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
+        extract_key_events,
+    )
+    from system3_core import (
+        TRIGGER_AREA_STAGNATION,
+        TRIGGER_FRONT_BLOCKED,
+        TRIGGER_KEY_EVENT,
+        StrategicCoreSystem3,
     )
 
 
@@ -155,8 +171,11 @@ THRESHOLDS = {
 }
 
 
-def build_payload(state_text: str, criteria: str | dict = "baseline") -> dict:
-    """Jev API に送る payload を組み立てる"""
+BASE_INSTRUCTIONS = "Choose the single best next action for the DOOM agent."
+
+
+def build_payload(state_text: str, criteria: str | dict = "baseline", order: str | None = None) -> dict:
+    """Jev API に送る payload を組み立てる。order は System 3 の指示（criteria は変えない）"""
     if isinstance(criteria, str):
         try:
             criteria_dict = CRITERIA_SETS[criteria]
@@ -178,7 +197,10 @@ def build_payload(state_text: str, criteria: str | dict = "baseline") -> dict:
         "questions": {
             "next_action": {
                 "type": "choice",
-                "instructions": "Choose the single best next action for the DOOM agent.",
+                "instructions": (
+                    f"{BASE_INSTRUCTIONS} Strategic order from the commander: {order}"
+                    if order else BASE_INSTRUCTIONS
+                ),
                 "criteria": dict(criteria_dict),
             }
         },
@@ -190,6 +212,7 @@ def get_jev_decision(
     state_text: str,
     criteria: str | dict = "baseline",
     timeout: float = 2.0,
+    order: str | None = None,
 ) -> dict:
     """Jev API を呼び出して判断を取得する（Session 再利用）"""
     if api_key:
@@ -198,7 +221,7 @@ def get_jev_decision(
         del _SESSION.headers["Authorization"]
     response = _SESSION.post(
         JEV_API_URL,
-        json=build_payload(state_text, criteria=criteria),
+        json=build_payload(state_text, criteria=criteria, order=order),
         timeout=timeout,
     )
     response.raise_for_status()
@@ -429,6 +452,11 @@ def main():
         action="store_true",
         help="ゲーム音を有効化（観戦時のみ推奨。長時間実験では指定しない）",
     )
+    parser.add_argument(
+        "--system3",
+        action="store_true",
+        help="System 3（Gemini）をトリガー時のみ非同期で呼び、Jev への instructions に指示を添える",
+    )
 
     args = parser.parse_args()
 
@@ -443,6 +471,8 @@ def main():
     for btn in scenario_buttons:
         ACTION_BUTTONS[btn.lower()] = btn
     print(f"ACTION_BUTTONS updated: {list(ACTION_BUTTONS.keys())}")
+
+    frame_skip = 4  # A方針：反応速度優先（114ms/step）
 
     # --- 初期化: 極限軽量化 ---
     game = vzd.DoomGame()
@@ -468,6 +498,10 @@ def main():
     game.set_depth_buffer_enabled(False)
     game.set_labels_buffer_enabled(args.use_labels)  # labels検出を使う場合のみ有効化
     game.set_automap_buffer_enabled(False)
+    if args.system3:
+        # 鍵イベント検出用。バッファは直近N tic分なので frame_skip に合わせると取りこぼし・重複がない
+        game.set_notifications_buffer_enabled(True)
+        game.set_notifications_buffer_size(frame_skip)
     game.set_ticrate(35)
     game.init()
 
@@ -477,9 +511,12 @@ def main():
 
     # 固定メモリ
     action_vec = [0] * n_buttons
-    frame_skip = 4  # A方針：反応速度優先（114ms/step）
     decision_interval_tic = 4  # 何ticごとにJevに聞くか（毎アクションごとに判断）
-    
+
+    sys3 = StrategicCoreSystem3() if args.system3 else None
+    if sys3 is not None:
+        sys3.start()
+
     viz = JevVisualizer()
     episode = 0
     choice = "move_forward"
@@ -513,6 +550,8 @@ def main():
         # USE を持つシナリオのみ front_blocked を state_text に載せる（他シナリオの入力は不変）
         block_detector = ForwardBlockDetector() if "use" in ACTION_BUTTONS else None
         front_blocked = None
+        stagnation_detector = AreaStagnationDetector() if sys3 is not None else None
+        order = None
 
         while not game.is_episode_finished():
             # 判断フレームのみ get_state() を呼ぶ
@@ -543,13 +582,36 @@ def main():
                         hit_count,
                         tic_counter,
                     )
+                position = (game.get_game_variable(vzd.GameVariable.POSITION_X),
+                            game.get_game_variable(vzd.GameVariable.POSITION_Y))
                 # この時点の choice は前回の判断で実行済みの行動
                 if block_detector is not None:
-                    front_blocked = block_detector.update(
-                        (game.get_game_variable(vzd.GameVariable.POSITION_X),
-                         game.get_game_variable(vzd.GameVariable.POSITION_Y)),
-                        choice,
-                    )
+                    front_blocked = block_detector.update(position, choice)
+
+                # System 3: トリガー発生時のみ非同期推論を依頼し、有効な指示を受け取る
+                if sys3 is not None:
+                    key_events = extract_key_events(state.notifications_buffer)
+                    triggers = []
+                    if front_blocked:
+                        triggers.append(TRIGGER_FRONT_BLOCKED)
+                    if stagnation_detector.update(position):
+                        triggers.append(TRIGGER_AREA_STAGNATION)
+                    if key_events:
+                        triggers.append(TRIGGER_KEY_EVENT)
+                    sys3_state = {
+                        "health": int(health),
+                        "kills": last_kills,
+                        "front_blocked": bool(front_blocked),
+                        "position": [round(position[0]), round(position[1])],
+                        "angle": round(game.get_game_variable(vzd.GameVariable.ANGLE)),
+                        "key_events": key_events,
+                    }
+                    if args.use_labels:
+                        label_info = detect_enemy_from_labels(state, min_width=args.min_width)
+                        sys3_state["enemy_visible"] = label_info["enemy_visible"]
+                        sys3_state["enemy_count"] = label_info["enemy_count"]
+                    sys3.update_state(sys3_state, triggers)
+                    order = sys3.get_current_instruction()
 
                 try:
                     choice, source, info = resolve_action(
@@ -558,7 +620,8 @@ def main():
                         use_labels=args.use_labels,
                         min_enemy_width=args.min_width if args.use_labels else 0.0,
                         decide=lambda text: get_jev_decision(
-                            api_key, text, criteria=filtered_criteria, timeout=1.0
+                            api_key, text, criteria=filtered_criteria, timeout=1.0,
+                            order=order,
                         ),
                         allow_system1=not prev_system1,
                         front_blocked=front_blocked,
@@ -575,6 +638,8 @@ def main():
                               f"red_mean={info['red_mean']:.1f} | "
                               f"enemy_visible={'yes' if info['enemy_visible'] else 'no'}")
                         print(f"    state_text: {info['state_text']}")
+                        if order:
+                            print(f"    order(System3): {order}")
                 except Exception as e:
                     print(f"[skip] {e}")
 
@@ -598,6 +663,8 @@ def main():
               f"kills={last_kills}")
         episode += 1
 
+    if sys3 is not None:
+        sys3.stop()
     game.close()
     viz.save("jev_visualization.png")
 

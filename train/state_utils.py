@@ -4,6 +4,7 @@ calib_red.py と jev_agent.py は必ずこのモジュールを使うこと。
 スライス範囲を変更する場合は、ここだけを編集する。
 """
 import math
+import re
 from collections import deque
 
 # 画面解像度（この値に依存してスライスが決まる）
@@ -192,3 +193,38 @@ class ForwardBlockDetector:
             return False
         (x0, y0), (x1, y1) = self.positions[0], self.positions[-1]
         return math.hypot(x1 - x0, y1 - y0) < self.max_distance
+
+
+# area_stagnation 判定：直近 STAGNATION_WINDOW 判断ステップ（frame_skip=4 で 176tic ≈ ゲーム内5秒）の
+# 位置がすべて重心から STAGNATION_RADIUS 単位以内なら、同じ狭い範囲に留まっているとみなす
+STAGNATION_WINDOW = 44
+STAGNATION_RADIUS = 128.0
+
+
+class AreaStagnationDetector:
+    def __init__(self, window: int = STAGNATION_WINDOW, radius: float = STAGNATION_RADIUS):
+        self.radius = radius
+        self.positions = deque(maxlen=window)
+
+    def update(self, position) -> bool:
+        self.positions.append(position)
+        if len(self.positions) < self.positions.maxlen:
+            return False
+        n = len(self.positions)
+        cx = sum(x for x, _ in self.positions) / n
+        cy = sum(y for _, y in self.positions) / n
+        if all(math.hypot(x - cx, y - cy) < self.radius for x, y in self.positions):
+            self.positions.clear()  # 発火後は窓を貯め直し、毎ステップの連続発火を防ぐ
+            return True
+        return False
+
+
+# 鍵に関する通知（取得・鍵付きドア）。Freedoom 実測: "Blue passcard secured!"
+KEY_EVENT_PATTERN = re.compile(r"passcard|keycard|skull ?key|\bkeys?\b", re.IGNORECASE)
+
+
+def extract_key_events(notifications: str | None) -> list[str]:
+    """notifications_buffer から鍵関連の行だけを返す（体力ボーナス等の取得通知は除外）"""
+    if not notifications:
+        return []
+    return [line.strip() for line in notifications.splitlines() if KEY_EVENT_PATTERN.search(line)]
