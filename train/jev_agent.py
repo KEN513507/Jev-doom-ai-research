@@ -2,6 +2,7 @@
 
 API key is read from TYPESAFE_API_KEY environment variable only.
 """
+import math
 import os
 import time
 from collections import deque
@@ -396,6 +397,12 @@ def save_screenshot(state, out_dir, episode, hit_num, tic):
 
 
 
+# 付け焼き刃5: スタック判定（STUCK_TICS の間に STUCK_MOVE_EPS 単位以上動かなければ脱出）
+STUCK_TICS = 30
+STUCK_MOVE_EPS = 8.0
+ESCAPE_STEPS = 4  # 脱出行動を続ける判断ステップ数（frame_skip=4 で 16tic）
+
+
 def main():
     global ACTION_BUTTONS  # ← この行を追加
     import argparse
@@ -513,6 +520,12 @@ def main():
         # USE を持つシナリオのみ front_blocked を state_text に載せる（他シナリオの入力は不変）
         block_detector = ForwardBlockDetector() if "use" in ACTION_BUTTONS else None
         front_blocked = None
+        # 付け焼き刃: 旋回時の同時押しボタンと、スタック脱出の状態
+        extra_buttons = []
+        _last_pos = None
+        _stuck_since = 0
+        _escape_dir = None
+        _escape_left = 0
 
         while not game.is_episode_finished():
             # 判断フレームのみ get_state() を呼ぶ
@@ -551,6 +564,7 @@ def main():
                         choice,
                     )
 
+                info = None
                 try:
                     choice, source, info = resolve_action(
                         state,
@@ -578,12 +592,39 @@ def main():
                 except Exception as e:
                     print(f"[skip] {e}")
 
+                # 付け焼き刃5: 30tic 位置がほぼ変わらなければ 右→左→後退 の順に脱出を試す
+                pos = (game.get_game_variable(vzd.GameVariable.POSITION_X),
+                       game.get_game_variable(vzd.GameVariable.POSITION_Y))
+                # 敵視認中は立ち止まって撃つのが正常なのでスタック扱いしない
+                enemy_now = info is not None and info.get("enemy_visible")
+                if enemy_now or _last_pos is None or math.dist(pos, _last_pos) > STUCK_MOVE_EPS:
+                    _last_pos, _stuck_since = pos, tic_counter
+                elif _escape_left == 0 and tic_counter - _stuck_since >= STUCK_TICS:
+                    order_ = ["move_right", "move_left", "move_backward"]
+                    _escape_dir = order_[(order_.index(_escape_dir) + 1) % 3] if _escape_dir in order_ else order_[0]
+                    _escape_left = ESCAPE_STEPS
+                    _stuck_since = tic_counter
+                    print(f"step={tic_counter} [Stuck] {STUCK_TICS}tic 停止 -> {_escape_dir}")
+                if _escape_left > 0:
+                    _escape_left -= 1
+                    choice = _escape_dir
+
+                # 付け焼き刃1: その場で旋回しない。旋回には同方向の横移動を同時押し、敵視認中は射撃も
+                extra_buttons = []
+                if choice in ("turn_left", "turn_right"):
+                    extra_buttons.append("MOVE_LEFT" if choice == "turn_left" else "MOVE_RIGHT")
+                    if info is not None and info.get("enemy_visible"):
+                        extra_buttons.append("ATTACK")
+
             # ボタンベクトルを再利用
             for i in range(n_buttons):
                 action_vec[i] = 0
             target = ACTION_BUTTONS.get(choice, "MOVE_FORWARD")
             if target in button_names:
                 action_vec[button_names.index(target)] = 1
+            for b in extra_buttons:
+                if b in button_names:
+                    action_vec[button_names.index(b)] = 1
 
             # フレームスキップで進める（USE はタップ）
             last_reward = execute_action(
