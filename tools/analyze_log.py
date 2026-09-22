@@ -57,7 +57,7 @@ def _longest_run(seq: list[str], values: set[str]) -> tuple[str | None, int]:
 def analyze_episode(lines: list[str]) -> dict:
     decisions = []  # 判断ごとの {"jev", "final", "enemy", "side"}
     hits = []  # (step, before, after)
-    counts = {"stuck": 0, "turn_move": 0, "use_fail": 0, "door_opened": 0, "door_no_door": 0,
+    counts = {"stuck_timeout": 0, "stuck": 0, "turn_move": 0, "use_fail": 0, "door_opened": 0, "door_no_door": 0,
               "wall_shot": 0, "skip": 0, "sys3_calls": 0, "sys3_errors": 0, "system1": 0}
     for i, line in enumerate(lines):
         m = RE_JEV.match(line)
@@ -89,7 +89,9 @@ def analyze_episode(lines: list[str]) -> dict:
         if m:
             hits.append((int(m.group(1)), int(m.group(2)), int(m.group(3))))
             continue
-        if "[Stuck]" in line:
+        if "[StuckTimeout]" in line:
+            counts["stuck_timeout"] += 1
+        elif "[Stuck]" in line:
             counts["stuck"] += 1
         elif "[TurnMove]" in line:
             counts["turn_move"] += 1
@@ -139,6 +141,7 @@ def analyze_episode(lines: list[str]) -> dict:
         "B8_use_fail": counts["use_fail"],
         "B8_door_opened": counts["door_opened"],
         "B8_door_no_door": counts["door_no_door"],
+        "B9_stuck_timeout": counts["stuck_timeout"],
         "D2_jev_decisions": n_jev,
         "D2_skip_rate": counts["skip"] / (n_jev + counts["skip"]) if (n_jev + counts["skip"]) else 0.0,
         "D3_sys3_calls": counts["sys3_calls"],

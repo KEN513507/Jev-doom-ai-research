@@ -91,7 +91,7 @@ PROMPTEOF
         fi
     else
         log "    ❌ Compile FAILED. Rolling back..."
-        git checkout train/jev_agent.py
+        git stash push -m "loop-rollback: $LOG_DIR iter ${i:-?}" -- train/jev_agent.py >/dev/null || git checkout train/jev_agent.py
         NEXT_CRITERIA="$CURRENT_CRITERIA"
     fi
     

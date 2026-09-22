@@ -333,6 +333,30 @@ def open_directions(depth) -> dict[str, str]:
     }
 
 
+# 被弾方向（案B、R2 の例外として承認済み）。ViZDoom の objects 情報で、生きている敵（category="Monster"。
+# 倒すと "Gore" に変わる）のうち最も近い1体を撃ってきた相手と推定し、自分の向きに対する方向を返す。
+# 角度は Doom の規約（0=東、反時計回りが正。TURN_LEFT で増える）で、相対角が正なら左。
+# 限界: 最も近い敵が撃った本人とは限らない（壁の向こうの敵など）
+DAMAGE_FRONT_DEG = 45.0  # 視野（水平 90°）の半分。これ以内は画面内にいるはず
+DAMAGE_BEHIND_DEG = 135.0
+
+
+def damage_side(objects, player_xy, player_angle_deg: float) -> str:
+    """front / left / right / behind のいずれか。生きている敵がいなければ unknown"""
+    px, py = player_xy
+    monsters = [o for o in (objects or []) if getattr(o, "category", None) == "Monster"]
+    if not monsters:
+        return "unknown"
+    nearest = min(monsters, key=lambda o: math.hypot(o.position_x - px, o.position_y - py))
+    bearing = math.degrees(math.atan2(nearest.position_y - py, nearest.position_x - px))
+    rel = (bearing - player_angle_deg + 180.0) % 360.0 - 180.0
+    if abs(rel) <= DAMAGE_FRONT_DEG:
+        return "front"
+    if abs(rel) >= DAMAGE_BEHIND_DEG:
+        return "behind"
+    return "left" if rel > 0 else "right"
+
+
 def center_depth(depth) -> float:
     """深度バッファの目線の高さ・中央帯の中央値（WallAvoider と同じ領域）"""
     h, w = depth.shape
@@ -369,6 +393,36 @@ class AreaStagnationDetector:
         cy = sum(y for _, y in self.positions) / n
         if all(math.hypot(x - cx, y - cy) < self.radius for x, y in self.positions):
             self.positions.clear()  # 発火後は窓を貯め直し、毎ステップの連続発火を防ぐ
+            return True
+        return False
+
+
+# stuck_timeout（2026-09-23 確定仕様）: 半径 STAGNATION_RADIUS（128単位）の円から STUCK_TIMEOUT_TICS（80tic）出られなければ発火。
+# 円の中心はカウント開始時の位置で固定し、円を出た瞬間にその位置を中心として数え直す。発火後も続行し、
+# 同じ円に留まり続ければ 80tic ごとに再発火してカウントアップする。位置は判断ごと（frame_skip=8 → 8tic 単位）にしか見ない
+STUCK_TIMEOUT_TICS = 80
+
+
+class StuckTimeoutDetector:
+    def __init__(self, radius: float = STAGNATION_RADIUS, timeout_tics: int = STUCK_TIMEOUT_TICS):
+        self.radius = radius
+        self.timeout_tics = timeout_tics
+        self.center = None
+        self.start_tic = 0
+        self.fires_in_dwell = 0  # 今の円での発火回数
+        self.count = 0           # エピソード内の発火回数（B9）
+        self.active = False      # 今の円に timeout_tics 以上留まっている（state_text の stuck_timeout=yes）
+
+    def update(self, position, tic: int) -> bool:
+        """判断ごとに呼ぶ。今回発火したら True"""
+        if self.center is None or math.dist(position, self.center) > self.radius:
+            self.center, self.start_tic, self.fires_in_dwell, self.active = position, tic, 0, False
+            return False
+        dwell = tic - self.start_tic
+        self.active = dwell >= self.timeout_tics
+        if dwell >= self.timeout_tics * (self.fires_in_dwell + 1):
+            self.fires_in_dwell += 1
+            self.count += 1
             return True
         return False
 

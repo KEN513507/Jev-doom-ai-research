@@ -48,16 +48,23 @@ criteria を変える提案は、これらの項目の組み合わせで表現�
 - enemy_visible: labels_buffer による敵検出 yes/no
 - enemy_count / enemy_centered / enemy_types / enemy_side: 敵の数・中央有無・種類・左右（**画面に映っている敵のみ**）
 - front_blocked: 前方が壁で塞がれているか yes/no（壁の手前で反射層が先に止めるため、yes になることは少ない）
-- took_damage: 前回判断以降に被弾したか yes/no（**方向は分からない**）
+- took_damage: 前回判断以降に被弾したか yes/no
+- damage_side: 被弾した方向 front / left / right / behind（被弾していなければ none）。最も近い生きている敵の方向から推定
+  （撃った本人とは限らない）
+- stuck_timeout: 半径128単位の円から80tic以上出られていないか yes/no（同じ場所を回っている・詰まっている）
 - open_left / open_center / open_right: 左・正面・右の開け具合 far / mid / near（深度バッファ）
 - item_visible / item_centered / item_types: 画面に映っているアイテム
 - Memory: 訪問セル数・最大移動距離などの要約
 
-**Jev に渡していない情報**（criteria では参照できない）: 被弾した方向、画面外の敵の位置、マップの形、
+**Jev に渡していない情報**（criteria では参照できない）: 画面外の敵の位置（被弾時の方向を除く）、マップの形、
 自分の向き（角度）、弾の残数、敵の体力、過去の自分の行動履歴。
 
 実走ログから取り出した実際の state_text の例:
 {state_samples}
+
+## 計測についての注意
+- EXIT の確定は人間が行う。コードの記録は exit_candidate=1（生存したまま timeout 前に終了 = EXIT 到達の候補）と
+  died=1（死亡、is_player_dead()）。i_exit は人間が確認するまで 0。2026-09-23 以前のレポートは死亡と EXIT を区別できていない
 
 ## 変更の制約（R1〜R5）
 - R1: train/jev_agent.py・train/state_utils.py への新しい if-then ロジックの追加は、自動ループでは行わない（人間の承認が必要）

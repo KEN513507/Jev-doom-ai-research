@@ -18,9 +18,9 @@
 |---|---|---|---|
 | A1 | Clear | 全滅（kills >= 18）かつ EXIT | JSON `kills`, `kills_total`, `i_exit` |
 | A2 | kills | 倒した数（/18） | JSON `kills` |
-| A3 | EXIT | タイムアウト前に生存して終了 | JSON `i_exit` |
+| A3 | EXIT | **人間が確定する**（決定3）。コードは「終了・生存（`is_player_dead()` が偽）・timeout 前」を EXIT 候補として記録するだけ | JSON `exit_candidate`（候補）、`i_exit`（人間の確定後）、ログ `[Episode End] reason=exit_candidate` |
 | A4 | **被ダメージ合計（主指標）** | HP 減少の合計。回復アイテムの影響を受けない | JSON `damage_taken` |
-| A4' | 副指標 | 被弾回数、最終HP、死亡（HP<=0） | JSON `hits`, `final_health` |
+| A4' | 副指標 | 被弾回数、最終HP、死亡（`is_player_dead()`） | JSON `hits`, `final_health`, `died` |
 | A5 | 探索 | 訪問セル数（128単位） | JSON `visited_cells` |
 | A6 | スコア | `tools/score_report.py` の式を1エピソードに適用 | 計算 |
 
@@ -36,6 +36,7 @@
 | B6 | use の連打 | 最終行動が use の最長連続 | 3 以下 |
 | B7 | 壁への誤射 | `[Reflex] strafe_attack_* -> attack` の回数 | 3b で 0 |
 | B8 | 反射層の発動 | Stuck / TurnMove / UseFail / DoorWait（opened・no_door）の回数 | 記録のみ |
+| B9 | stuck_timeout | 半径128単位の円から80tic出られなかった回数（中心はカウント開始時に固定、円を出たら数え直し、留まれば80ticごとに加算）。位置は判断ごと（8tic 単位）に見る | 0 に近い |
 
 ## C. 資源
 

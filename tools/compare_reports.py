@@ -30,7 +30,7 @@ METRICS = [
     ("damage_taken", lambda e: e.get("damage_taken", _diag(e, "A4_damage_taken_log")), -1),
     ("hits", lambda e: e.get("hits"), -1),
     ("final_health", lambda e: e.get("final_health"), +1),
-    ("died", lambda e: float(e.get("final_health", 1) <= 0), -1),
+    ("died", lambda e: float(e["died"] if e.get("died") is not None else e.get("final_health", 1) <= 0), -1),
     ("visited_cells", lambda e: e.get("visited_cells"), +1),
     ("score", lambda e: _episode_score(e), +1),
     ("ammo_used", lambda e: e.get("ammo_used"), 0),
@@ -42,6 +42,7 @@ METRICS = [
     ("B5_offscreen_hit_rate", lambda e: _diag(e, "B5_offscreen_hit_rate"), -1),
     ("B6_longest_use_run", lambda e: _diag(e, "B6_longest_use_run"), -1),
     ("B7_wall_shots", lambda e: _diag(e, "B7_wall_shots"), -1),
+    ("B9_stuck_timeout", lambda e: e.get("stuck_timeout", _diag(e, "B9_stuck_timeout")), -1),
     ("D2_skip_rate", lambda e: _diag(e, "D2_skip_rate"), -1),
 ]
 

@@ -41,6 +41,8 @@ try:
         center_depth,
         door_wait_verdict,
         open_directions,
+        damage_side,
+        StuckTimeoutDetector,
         WallAvoider,
         compute_red_metrics,
         build_state_text,
@@ -65,6 +67,8 @@ except ImportError:  # python train/jev_agent.py 直接実行時
         center_depth,
         door_wait_verdict,
         open_directions,
+        damage_side,
+        StuckTimeoutDetector,
         WallAvoider,
         compute_red_metrics,
         build_state_text,
@@ -239,6 +243,20 @@ CRITERIA_SETS = {
         "strafe_attack_right": "PRIMARY COMBAT ACTION. Strafe right AND fire simultaneously. Use when enemy_centered=yes to dodge incoming fire while keeping damage output.",
         "advance_attack": "Advance AND fire simultaneously. Use to close distance on a centered enemy while maintaining pressure.",
     },
+    # 部屋を1つずつ制圧してから進む汎用戦略（FPS 全般の「クリアリング」）。マップ固有の情報は書かない
+    "tactical_room_clearing": {
+        "attack": "Fire whenever enemy_visible=yes. Do NOT attack if no enemy is visible.",
+        "move_forward": "Advance only when enemy_visible=no AND took_damage=no AND open_center is far or mid. Do not rush into a new area: after entering one, check both sides with turn_left/turn_right before advancing further.",
+        "move_backward": "Retreat one step only when health (var0) is below 30 AND enemy_visible=yes, to break the enemy's line of fire.",
+        "move_left": "Strafe left to dodge when enemy_visible=yes and the enemy is not centered on the left side, or to step out of a corner when stuck_timeout=yes.",
+        "move_right": "Strafe right to dodge when enemy_visible=yes and the enemy is not centered on the right side, or to step out of a corner when stuck_timeout=yes.",
+        "turn_left": "If took_damage=yes and damage_side is left or behind, turn left to face the attacker FIRST. If enemy_visible=yes and enemy_side=left, turn left to center the enemy. Otherwise turn left to check the room when open_left=far.",
+        "turn_right": "If took_damage=yes and damage_side is right, turn right to face the attacker FIRST. If enemy_visible=yes and enemy_side=right, turn right to center the enemy. Otherwise turn right to check the room when open_right=far.",
+        "use": "Select 'use' when front_blocked=yes or open_center=near to open doors or wall switches. Try up to two times in total, then turn away.",
+        "strafe_attack_left": "Strafe left AND fire when enemy_visible=yes AND enemy_centered=yes AND took_damage=yes (dodge while returning fire).",
+        "strafe_attack_right": "Strafe right AND fire when enemy_visible=yes AND enemy_centered=yes AND took_damage=yes (dodge while returning fire).",
+        "advance_attack": "Advance AND fire only when enemy_visible=yes AND enemy_centered=yes AND health (var0) is 50 or more.",
+    },
     # 隠し部屋・モンスタークローゼット（壁スイッチ）を探しながら探索する汎用戦略。マップ固有の情報は書かない
     "tactical_secret_hunt": {
         "attack": "Fire whenever enemy_visible=yes. Prefer enemy_centered=yes when possible.",
@@ -379,6 +397,8 @@ def state_to_text(
     took_damage: bool | None = None,
     report_items: bool = False,
     report_open: bool = False,
+    damage_dir: str | None = None,
+    stuck_timeout: bool | None = None,
 ) -> tuple[str, float, bool]:
     """ViZDoom の状態を Jev が理解できるテキストに変換する。
 
@@ -417,6 +437,12 @@ def state_to_text(
     if took_damage is not None:
         # Phase 3a（2026-09-23）: 前回判断以降の被弾有無。画面外からの被弾への反応用
         extra_parts.append(f"took_damage={'yes' if took_damage else 'no'}")
+        if damage_dir is not None:
+            # 被弾方向（案B）。被弾していなければ none
+            extra_parts.append(f"damage_side={damage_dir if took_damage else 'none'}")
+    if stuck_timeout is not None:
+        # 半径128単位の円から80tic以上出られていない（同じ場所を回っている・詰まっている）
+        extra_parts.append(f"stuck_timeout={'yes' if stuck_timeout else 'no'}")
     if report_open and state is not None and getattr(state, "depth_buffer", None) is not None:
         # 3方向の開け具合（far / mid / near）。どちらへ進めば歩けるかを Jev に渡す
         extra_parts.extend(f"{k}={v}" for k, v in open_directions(state.depth_buffer).items())
@@ -470,7 +496,7 @@ def should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRES
 
 def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True,
                    front_blocked=None, memory_summary="", took_damage=None,
-                   report_items=False, report_open=False):
+                   report_items=False, report_open=False, damage_dir=None, stuck_timeout=None):
     """次の行動を決定する。
 
     decide: state_text -> Jev API応答dict（System2）。
@@ -487,7 +513,8 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
     state_text, red_mean, enemy_visible = state_to_text(
         state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width,
         front_blocked=front_blocked, took_damage=took_damage,
-        report_items=report_items, report_open=report_open,
+        report_items=report_items, report_open=report_open, damage_dir=damage_dir,
+        stuck_timeout=stuck_timeout,
     )
     if memory_summary:
         state_text = state_text + f" [Memory: {memory_summary}]"
@@ -621,6 +648,13 @@ def write_status(lines: list[str], path: str = STATUS_FILE) -> None:
 
 
 
+# エピソードの時間上限（tic）。full_map の episode_timeout と同じ
+EPISODE_TIMEOUT_TIC = 2100
+# エピソード終了時に画面を保持する秒数（目視用）。無人運転では環境変数 EPISODE_END_HOLD_SEC=0
+_HOLD = float(os.environ.get("EPISODE_END_HOLD_SEC", "-1"))
+END_HOLD_SEC = ({"death": 10.0, "exit_candidate": 10.0, "timeout": 5.0} if _HOLD < 0
+                else {"death": _HOLD, "exit_candidate": _HOLD, "timeout": _HOLD})
+
 # 付け焼き刃: スタック判定（STUCK_TICS の間に STUCK_MOVE_EPS 単位以上動かなければ脱出）
 STUCK_TICS = 30
 STUCK_MOVE_EPS = 8.0
@@ -663,6 +697,16 @@ def main():
         type=int,
         default=None,
         help="乱数の種。エピソード i は seed+i を使う（条件間で同じ敵の動きにそろえる比較用）",
+    )
+    parser.add_argument(
+        "--no-stuck-timeout",
+        action="store_true",
+        help="stuck_timeout を state_text に載せない（計測 B9 は行う。Phase 1 の比較用）",
+    )
+    parser.add_argument(
+        "--no-damage-side",
+        action="store_true",
+        help="被弾方向（damage_side）を Jev に渡さない（効果の切り分け用）",
     )
     parser.add_argument(
         "--no-open-dirs",
@@ -745,6 +789,9 @@ def main():
     #     game.add_game_args("+snd_musicvolume 0.5")
     game.set_screen_resolution(vzd.ScreenResolution.RES_320X240)
     game.set_depth_buffer_enabled("use" in ACTION_BUTTONS)  # 壁回避（WallAvoider）用
+    # 被弾方向（案B）用の objects 情報。深度バッファと同じく full_map 系（USE あり）のみ
+    report_damage_side = "use" in ACTION_BUTTONS and not args.no_damage_side
+    game.set_objects_info_enabled(report_damage_side)
     game.set_labels_buffer_enabled(args.use_labels)  # labels検出を使う場合のみ有効化
     game.set_automap_buffer_enabled(False)
     # 鍵イベント検出用（WorldMemory・System 3）。バッファは直近N tic分なので frame_skip に合わせると取りこぼし・重複がない
@@ -790,6 +837,7 @@ def main():
         hit_count = 0
         prev_health = 100
         prev_decision_health = 100  # Phase 3a: 前回判断時の HP（took_damage 判定用）
+        stuck_detector = StuckTimeoutDetector()
         hit_capture_until = -1  # 被弾後の撮影期限（tic）
         # System 1/2 発動回数
         system1_count = 0
@@ -910,7 +958,21 @@ def main():
                 jev_line, reason = "(no decision)", ""
                 LAST_JEV_LATENCY_MS[0] = None  # System 1 で Jev を呼ばなかった判断と区別する
                 # Phase 3a: 前回判断以降に HP が減っていれば被弾あり
+                # stuck_timeout: 計測（B9）は常に行い、state_text に載せるかは --no-stuck-timeout で切り替える
+                if stuck_detector.update(position, tic_counter):
+                    print(f"step={tic_counter} [StuckTimeout] #{stuck_detector.count} "
+                          f"(radius {stuck_detector.radius:.0f}, {stuck_detector.timeout_tics}tic)")
                 took_damage = int(health) < prev_decision_health
+                # 被弾方向（案B）: 被弾したときだけ objects 情報から推定。--no-damage-side で無効
+                damage_dir = None
+                if report_damage_side:
+                    damage_dir = "none"
+                    if took_damage:
+                        try:
+                            damage_dir = damage_side(
+                                state.objects, position, game.get_game_variable(vzd.GameVariable.ANGLE))
+                        except Exception:
+                            damage_dir = "unknown"
                 prev_decision_health = int(health)
                 try:
                     choice, source, info = resolve_action(
@@ -928,6 +990,8 @@ def main():
                         took_damage=took_damage,
                         report_items=True,
                         report_open=not args.no_open_dirs,
+                        damage_dir=damage_dir,
+                        stuck_timeout=None if args.no_stuck_timeout else stuck_detector.active,
                     )
                     prev_system1 = (source == "system1")
                     if source == "system1":
@@ -1056,49 +1120,38 @@ def main():
                                    if state is not None and state.depth_buffer is not None else None)
             tic_counter += frame_skip
 
-        # P1: エピソード終了時の被弾サマリー
-        # SSOT: I_EXIT = 1 は「timeout前 + 生存」
-        # ★ 死亡判定: エピソードが早期終了（timeout=2100未満）したら死亡扱い
-        # （現在、EXIT到達判定は未実装のため、早期終了 = 死亡と見なす）
-        episode_ended_early = (tic_counter < 2100)
-        
-        # より正確な health 取得を試みる
+        # P1: エピソード終了時の判定。死亡は ViZDoom の is_player_dead() で判定する
+        # （旧実装は早期終了を無条件に死亡扱いしていた）。
+        # 決定3（2026-09-23）: EXIT の確定は人間が行う。コードは「生存したまま timeout 前に終了」を EXIT 候補
+        # （exit_candidate=1）として記録するだけで、i_exit は付けない（人間が確認して記録する）
+        episode_ended_early = tic_counter < EPISODE_TIMEOUT_TIC
+        is_dead = bool(game.is_player_dead())
         final_health = prev_health
         try:
-            if game.is_episode_finished():
-                # 最後の state を取得できる場合がある
-                _fs = game.get_state()
-                if _fs is not None and len(_fs.game_variables) > 0:
-                    final_health = int(_fs.game_variables[0])
+            final_health = int(game.get_game_variable(vzd.GameVariable.HEALTH))
         except Exception:
             pass
-        
-        is_dead = episode_ended_early or (final_health <= 0)
-        
-        # ★ ゲームオーバー画面を保持（人間が目視できるように）
-        if is_dead and episode_ended_early:
-            print(f"[GAME OVER] Episode {episode} - 死亡（early end at tic={tic_counter}）。10秒保持")
-            import time as _time
-            for _i in range(10):
-                _time.sleep(1)
-                print(f"  ...{_i+1}/10")
-            print("[GAME OVER] 次のエピソードへ")
-        elif tic_counter >= 2100:
-            print(f"[TIMEOUT] Episode {episode} - タイムアウト（生存）。5秒待機")
-            import time as _time
-            for _i in range(5):
-                _time.sleep(1)
-                print(f"  ...{_i+1}/5")
-        
-        i_exit = 1 if (not is_dead and tic_counter < 2100) else 0
+        if is_dead:
+            final_health = min(final_health, 0)
+        finished = bool(game.is_episode_finished())  # state 取得失敗でループを抜けた場合は候補にしない
+        exit_candidate = 1 if (finished and episode_ended_early and not is_dead) else 0
+        i_exit = 0  # 人間の判定で確定する
+        end_reason = ("death" if is_dead else "exit_candidate" if exit_candidate
+                      else "timeout" if not episode_ended_early else "aborted")
+        print(f"[Episode End] Episode {episode} reason={end_reason} tic={tic_counter} health={final_health}")
+        # 目視用の保持（無人運転では EPISODE_END_HOLD_SEC=0 で省略。5エピソードで約30秒の短縮）
+        hold = END_HOLD_SEC.get(end_reason, 0.0)  # aborted は保持しない
+        if hold > 0:
+            time.sleep(hold)
         print(f"Episode {episode} done: hits={hit_count}, "
-              f"final_health={prev_health}, steps={tic_counter}, "
+              f"final_health={final_health}, steps={tic_counter}, "
               f"sys1={system1_count}, sys2={system2_count}, "
               f"kills={last_kills}, visited_cells={len(world_memory.visited_cells)}, "
               f"max_distance={world_memory.max_distance:.0f}, "
               f"keys={len(world_memory.keys_obtained)}, "
               f"dead_ends={len(world_memory.dead_ends)}, "
-              f"i_exit={i_exit}, "
+              f"i_exit={i_exit}, exit_candidate={exit_candidate}, died={int(is_dead)}, "
+              f"stuck_timeout={stuck_detector.count}, "
               f"kills_total={full_map['monsters_total'] if full_map else 0}, "
               f"ammo_used={ammo_used}, attack_steps={attack_steps}, "
               f"dmg_hits={int(game.get_game_variable(vzd.GameVariable.HITCOUNT))}, "

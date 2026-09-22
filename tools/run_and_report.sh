@@ -90,6 +90,9 @@ for line in lines:
             "melee_steps": kv.get("melee_steps", 0),
             "seed": kv.get("seed", -1),
             "jev_latency_median": kv.get("jev_latency_median", -1),
+            "died": kv.get("died"),
+            "exit_candidate": kv.get("exit_candidate", 0),
+            "stuck_timeout": kv.get("stuck_timeout"),
         })
     elif "!!! HIT" in line:
         hm = re.search(r'HIT #(\d+) at step=(\d+): (\d+) -> (\d+)', line)
@@ -127,8 +130,9 @@ if episodes:
         "avg_dmg_hits": sum(e["dmg_hits"] for e in episodes) / n,
         "avg_damage_taken": (sum(e["damage_taken"] for e in episodes) / n
                              if all(e["damage_taken"] is not None for e in episodes) else None),
-        "deaths": sum(1 for e in episodes if e["final_health"] <= 0),
+        "deaths": sum(1 for e in episodes if (e["died"] if e["died"] is not None else e["final_health"] <= 0)),
         "ammo_outs": sum(1 for e in episodes if e["ammo_min"] == 0),
+        "exit_candidates": sum(e["exit_candidate"] for e in episodes),
         "seeds": [e["seed"] for e in episodes],
         "avg_jev_latency_median": (sum(e["jev_latency_median"] for e in episodes) / n
                                    if all(e["jev_latency_median"] >= 0 for e in episodes) else None),
