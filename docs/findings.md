@@ -33,8 +33,22 @@
 - state_utils.py に定数を集約（解像度・スライス・閾値を一元管理）
 - calib_v2: baseline median=41.6, enemy max=52-65
 - ENEMY_RED_THRESHOLD=48.0 で判定
-- 実機ログ: 
+- 実機ログ:
   - red_mean 41-47 → enemy_visible=no → move_forward (100%)
   - red_mean 48-61 → enemy_visible=yes → attack (100%)
 - 境界 48.0 ケースも正しく判定
 - 結論: Jevは criteria + 数値コンテキストに完全に忠実
+## Finding 7: マップ選定の重要性（2026-09-22 夜）
+
+- deadly_corridor のWAD実測：敵6体（ShotgunGuy×2、Zombieman×2、ChaingunGuy×2）、x=160/608/1024に左右交互配置。プレイヤー(0,0)→ゴールGreenArmor(1312,0)はX軸直線だが、敵は側面のため旋回エイムが必須
+- シナリオのボタン数がcriteria設計を制約する（`train/scenarios.py` に9シナリオ定義。take_coverはMOVE_LEFT/RIGHTのみ、full_mapはfreedoom2.cfg+map01で実装済み、動作検証はこれから）
+- 結論：マップ選定は研究の前提条件。製品版マップの方が戦術的余地が大きい
+## Finding 8: 自動イテレーションループの確立（2026-09-22 夜）
+
+- `tools/self_correcting_loop.sh`：チャンピオン方式（改善→採用、悪化→ロールバック、3回連続失敗で停止）。`tools/semi_auto_loop.sh`、`run_and_report.sh`併用
+- 検証済み成績（`experiments/auto_logs/report_*.json`、各3エピソード平均）：
+  - tactical_p3（172443→174737で改善）：hits 2.8、health 28.0、steps 164.8、sys2 90.8%
+  - tactical_p2（170621）：hits 2.33、health 22.0、steps 156.0、sys2 82.1%、kills=2を複数エピソードで確認
+  - tactical_p1（170244）：hits 1.33、health 34.0、steps 40.0、sys2 53.3%（後退スパム傾向）
+- System 1実測（tactical_p2ログ21件）：発動幅は0/10/11/12/13の全て20未満。閾値20では発動ゼロになることを確認
+- 未実装：`docs/objective.md`の構造化、KILLCOUNTのパーサー対応

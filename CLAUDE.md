@@ -151,3 +151,13 @@ System 1/2分離を実装したい。まず計画を立てて。
 | タスク開始 | 直接依頼 | **Plan Mode** で計画→承認→実装 |
 | 検証 | 言及なし | **自分でテスト実行**を明示 |
 | コンテキスト管理 | 言及なし | `/clear`、サブエージェント活用 |
+
+---
+
+## Current State (as of 2026-09-22 夜)
+
+- Champion: tactical_p3（hits 2.8、sys2 90.8%）。次点tactical_p2（hits 2.33、kills=2確認）
+- System 1閾値方針が未決（20 vs 8.0）。立上り限定の呼び出し側が欠落中
+- full_map対応は実装済み、動作検証はこれから
+- 研究目的・指標は `docs/objective.md`、実測記録は `docs/findings.md` を参照
+- 制約：AIはGit操作禁止、APIキーは環境変数、ウィンドウ表示必須
