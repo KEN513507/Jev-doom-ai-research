@@ -28,3 +28,7 @@ experiments/**/tmp/
 Thumbs.db
 _vizdoom_ref/
 _vizdoom_ref/
+experiments/hits/
+experiments/semi_auto_*/
+experiments/self_correct_*/
+experiments/auto_logs/
