@@ -40,6 +40,18 @@ class TestScoreReport(unittest.TestCase):
             1000 + 80 - 200 + 30,
         )
 
+    def test_full_map_exit_and_full_clear_are_per_episode(self):
+        # D3: EXIT・全滅も他の項と同じくエピソード平均。5回中1回 EXIT・1回全滅なら +2000 +1000
+        report = _report(scenario="full_map", kills=2.0, visited_cells=8.0)
+        report["summary"].update({"avg_i_exit": 0.2, "exits": 1, "full_clears": 1})
+        self.assertAlmostEqual(compute_score(report), 1000 + 80 - 200 + 30 + 2000 + 1000)
+
+    def test_full_map_every_episode_cleared(self):
+        # 全エピソードで全滅して EXIT → SSOT §3 の 1エピソード分のボーナス（10000 + 5000）
+        report = _report(scenario="full_map", kills=18.0, hits=0.0, health=100.0)
+        report["summary"].update({"avg_i_exit": 1.0, "exits": 5, "full_clears": 5})
+        self.assertAlmostEqual(compute_score(report), 9000 + 100 + 10000 + 5000)
+
     def test_invalid_run_fails(self):
         report = _report(scenario="full_map", kills=2.0)
         report["valid"] = False
