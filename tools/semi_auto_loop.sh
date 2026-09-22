@@ -64,7 +64,9 @@ PROMPTEOF
 )
     
     # Claude Code 呼び出し（print モード）
-    timeout 600 claude -p "$PROMPT" > "$LOG_DIR/iter${i}_claude.log" 2>&1 || {
+    timeout 600 claude -p "$PROMPT" \
+        --allowed-tools "Read,Edit,Write,Bash(python*),Bash(pytest*),Bash(ls*),Bash(cat*),Bash(grep*)" \
+        > "$LOG_DIR/iter${i}_claude.log" 2>&1 || {
         log "    ⚠ Claude Code timeout/error. Check log."
     }
     
@@ -77,7 +79,7 @@ PROMPTEOF
         git diff > "$LOG_DIR/iter${i}_diff.patch"
         
         # 次のcriteria名を抽出（next_action から）
-        NEXT_CRITERIA=$(grep -oP 'criteria \K[a-z_]+' "$LOG_DIR/iter${i}_next_action.md" | head -1)
+        NEXT_CRITERIA=$(grep -oP 'criteria \K[a-z0-9_]+' "$LOG_DIR/iter${i}_next_action.md" | head -1)
         if [ -z "$NEXT_CRITERIA" ]; then
             NEXT_CRITERIA="$CURRENT_CRITERIA"
         fi
