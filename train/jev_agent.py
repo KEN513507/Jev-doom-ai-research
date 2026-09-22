@@ -99,6 +99,21 @@ CRITERIA_SETS = {
         "turn_right": "Rotate right to align with an off-center enemy.",
         "attack": "Fire ONLY if enemy_centered=yes. Do NOT attack if the enemy is off-center or not visible.",
     },
+    # Sys1 が排除できなかった場合に被弾リスク最小化を優先する基準（B方針：被弾回避重視）
+    "tactical_p2": {
+        "move_forward": "CRITICAL: Advance toward the goal. If no enemy is visible, always move forward.",
+        "move_backward": "Retreat ONLY if health < 30 AND enemy_centered=yes. Do NOT retreat otherwise.",
+        "turn_left": "Rotate to aim at off-center enemies.",
+        "turn_right": "Rotate to aim at off-center enemies.",
+        "attack": "Fire if enemy_centered=yes AND health > 30.",
+    },
+    "tactical_p1": {
+        "move_forward": "Advance only when enemy_visible=no. Do NOT close distance into an enemy's line of fire.",
+        "move_backward": "CRITICAL: If enemy_visible=yes, retreat immediately to increase distance and break line of sight, whether or not the enemy is centered. Maintaining a safe distance takes priority over holding ground.",
+        "turn_left": "CRITICAL: If enemy_visible=yes, prioritize turning to realign the crosshair onto the enemy from a safer angle before attacking. Prefer this over attacking from a bad angle.",
+        "turn_right": "CRITICAL: If enemy_visible=yes, prioritize turning to realign the crosshair onto the enemy from a safer angle before attacking. Prefer this over attacking from a bad angle.",
+        "attack": "Fire ONLY if enemy_centered=yes AND health is above 50 AND a safe distance is already maintained. Do NOT attack if it would mean holding position under fire while off-center or at close range.",
+    },
 }
 
 # criteria ごとの敵検出閾値（red_mean > threshold で enemy_visible=yes）
