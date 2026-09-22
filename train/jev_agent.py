@@ -2,7 +2,6 @@
 
 API key is read from TYPESAFE_API_KEY environment variable only.
 """
-import math
 import os
 import time
 from collections import deque
@@ -15,28 +14,55 @@ import vizdoom as vzd
 
 # --- シナリオ定義のインポート ---
 try:
-    from train.scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA
+    from train.scenarios import (FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA,
+        ACTION_DEFINITIONS, DEFAULT_CRITERIA, get_action_buttons, build_action_vector)
 except ImportError:
-    from scenarios import FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA
+    from scenarios import (FULL_MAP_SCENARIOS, SCENARIO_BUTTONS, SCENARIO_CRITERIA,
+        ACTION_DEFINITIONS, DEFAULT_CRITERIA, get_action_buttons, build_action_vector)
 
+
+try:
+    from train.world_memory import WorldMemory
+    from train.elevation import ElevationTracker, DoorWaiter
+except ImportError:
+    from world_memory import WorldMemory
+    from elevation import ElevationTracker, DoorWaiter
 
 try:
     from train.state_utils import (
         ENEMY_RED_THRESHOLD,
         MIN_ENEMY_WIDTH,
+        AreaStagnationDetector,
         ForwardBlockDetector,
+        WallAvoider,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
+        extract_key_events,
+    )
+    from train.system3_core import (
+        TRIGGER_AREA_STAGNATION,
+        TRIGGER_FRONT_BLOCKED,
+        TRIGGER_KEY_EVENT,
+        StrategicCoreSystem3,
     )
 except ImportError:  # python train/jev_agent.py 直接実行時
     from state_utils import (
         ENEMY_RED_THRESHOLD,
         MIN_ENEMY_WIDTH,
+        AreaStagnationDetector,
         ForwardBlockDetector,
+        WallAvoider,
         compute_red_metrics,
         build_state_text,
         detect_enemy_from_labels,
+        extract_key_events,
+    )
+    from system3_core import (
+        TRIGGER_AREA_STAGNATION,
+        TRIGGER_FRONT_BLOCKED,
+        TRIGGER_KEY_EVENT,
+        StrategicCoreSystem3,
     )
 
 
@@ -48,13 +74,7 @@ JEV_TIMEOUT = float(os.environ.get("JEV_TIMEOUT", "5.0"))
 _SESSION = requests.Session()
 
 # 行動の定義（Jevの criteria と ViZDoom のボタン順を一致させる）
-ACTION_BUTTONS = {
-    "move_forward": "MOVE_FORWARD",
-    "move_backward": "MOVE_BACKWARD",
-    "turn_left": "TURN_LEFT",
-    "turn_right": "TURN_RIGHT",
-    "attack": "ATTACK",
-}
+ACTION_BUTTONS = dict(ACTION_DEFINITIONS)
 
 
 # 実験用の criteria セット（キー集合は ACTION_BUTTONS と一致させること）
@@ -65,6 +85,9 @@ CRITERIA_SETS = {
         "turn_left": "Rotate to scan for enemies or align with a corridor.",
         "turn_right": "Rotate to scan for enemies or align with a corridor.",
         "attack": "Fire ONLY if an enemy is clearly visible in the center of view. Do NOT attack if no enemy is visible.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Use ONLY if an enemy is clearly visible in the center of view, to dodge while firing. Do NOT use if no enemy is visible.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Use ONLY if an enemy is clearly visible in the center of view, to dodge while firing. Do NOT use if no enemy is visible.",
+        "advance_attack": "Advance AND fire simultaneously. Use ONLY if an enemy is clearly visible in the center of view and closing distance is safe. Do NOT use if no enemy is visible.",
     },
     "aggressive": {
         "move_forward": "Advance toward the enemy to close distance.",
@@ -72,6 +95,9 @@ CRITERIA_SETS = {
         "turn_left": "Quickly turn to face the enemy.",
         "turn_right": "Quickly turn to face the enemy.",
         "attack": "Fire whenever an enemy is visible, even if off-center. Attack is the top priority. Do NOT attack if no enemy is visible.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Use freely whenever an enemy is visible to keep firing while dodging. Do NOT use if no enemy is visible.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Use freely whenever an enemy is visible to keep firing while dodging. Do NOT use if no enemy is visible.",
+        "advance_attack": "Advance AND fire simultaneously. Preferred way to close distance whenever an enemy is visible. Do NOT use if no enemy is visible.",
     },
     "defensive": {
         "move_forward": "Advance cautiously only when no enemy is visible and health is sufficient.",
@@ -79,6 +105,9 @@ CRITERIA_SETS = {
         "turn_left": "Rotate to check surroundings before moving.",
         "turn_right": "Rotate to check surroundings before moving.",
         "attack": "Fire ONLY if an enemy is clearly visible in the center of view AND there is no immediate danger. Do NOT attack if no enemy is visible.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Use ONLY if an enemy is clearly visible in the center of view and you must dodge. Prefer retreating when health is dropping.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Use ONLY if an enemy is clearly visible in the center of view and you must dodge. Prefer retreating when health is dropping.",
+        "advance_attack": "Advance AND fire simultaneously. Almost never use: advancing into fire contradicts survival first. Only if the enemy is centered, very close, and health is high.",
     },
     "explorer": {
         "move_forward": "Always keep moving forward to expand explored area. This is the top priority, ignore enemies.",
@@ -86,6 +115,9 @@ CRITERIA_SETS = {
         "turn_left": "Turn only to unblock the path or follow a corridor.",
         "turn_right": "Turn only to unblock the path or follow a corridor.",
         "attack": "Do not go out of your way to attack. Fire only as a last resort. Do NOT attack if no enemy is visible.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Last resort only, when a centered enemy blocks the path. Do NOT use if no enemy is visible.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Last resort only, when a centered enemy blocks the path. Do NOT use if no enemy is visible.",
+        "advance_attack": "Advance AND fire simultaneously. Preferred way to handle a centered enemy in your path: keep moving forward while firing. Do NOT use if no enemy is visible.",
     },
     # labels_buffer 検出と組み合わせる先制攻撃セット（A方針：Jev純粋評価用）
     "aggressive_p0": {
@@ -94,6 +126,9 @@ CRITERIA_SETS = {
         "turn_left": "Use only to realign the target when the enemy is slightly off-center.",
         "turn_right": "Use only to realign the target when the enemy is slightly off-center.",
         "attack": "CRITICAL: If enemy_visible=yes, you MUST immediately choose 'attack'. Preemptive fire is mandatory. Do NOT attack if no enemy is visible.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Use when enemy_visible=yes AND enemy_centered=yes to fire while dodging. Do NOT use if enemy_visible=no.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Use when enemy_visible=yes AND enemy_centered=yes to fire while dodging. Do NOT use if enemy_visible=no.",
+        "advance_attack": "Advance AND fire simultaneously. Use when enemy_centered=yes to fire while closing distance. Do NOT use if enemy_visible=no.",
     },
     "aggressive_p1": {
         "move_forward": "CRITICAL: Advance along the corridor toward the goal. Move forward whenever enemy_centered=no OR enemy_visible=no. Do NOT stand still.",
@@ -101,6 +136,9 @@ CRITERIA_SETS = {
         "turn_left": "Rotate left to align with an off-center enemy.",
         "turn_right": "Rotate right to align with an off-center enemy.",
         "attack": "Fire ONLY if enemy_centered=yes. Do NOT attack if the enemy is off-center or not visible.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. ONLY when enemy_centered=yes, to fire while dodging.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. ONLY when enemy_centered=yes, to fire while dodging.",
+        "advance_attack": "Advance AND fire simultaneously. ONLY when enemy_centered=yes, to keep advancing along the corridor while firing.",
     },
     # Sys1 が排除できなかった場合に被弾リスク最小化を優先する基準（B方針：被弾回避重視）
     "take_cover_p1": {
@@ -109,6 +147,9 @@ CRITERIA_SETS = {
         "move_left": "Strafe left to dodge incoming fire or peek from cover.",
         "move_right": "Strafe right to dodge incoming fire or peek from cover.",
         "attack": "Fire when enemy_centered=yes AND health > 30. Prioritize cover when reloading or exposed.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. ONLY when enemy_centered=yes AND health > 30, to dodge incoming fire while shooting.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. ONLY when enemy_centered=yes AND health > 30, to dodge incoming fire while shooting.",
+        "advance_attack": "Advance AND fire simultaneously. ONLY when enemy_centered=yes AND health >= 50 AND not under heavy fire. Otherwise prefer cover.",
     },
     "tactical_p2": {
         "move_forward": "CRITICAL: Advance toward the goal. If no enemy is visible, always move forward.",
@@ -116,6 +157,9 @@ CRITERIA_SETS = {
         "turn_left": "Rotate to aim at off-center enemies.",
         "turn_right": "Rotate to aim at off-center enemies.",
         "attack": "Fire if enemy_centered=yes AND health > 30.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Use when enemy_centered=yes AND health > 30.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Use when enemy_centered=yes AND health > 30.",
+        "advance_attack": "Advance AND fire simultaneously. Use when enemy_centered=yes AND health > 30 to push toward the goal while firing.",
     },
     "tactical_p1": {
         "move_forward": "Advance only when enemy_visible=no. Do NOT close distance into an enemy's line of fire.",
@@ -123,6 +167,9 @@ CRITERIA_SETS = {
         "turn_left": "CRITICAL: If enemy_visible=yes, prioritize turning to realign the crosshair onto the enemy from a safer angle before attacking. Prefer this over attacking from a bad angle.",
         "turn_right": "CRITICAL: If enemy_visible=yes, prioritize turning to realign the crosshair onto the enemy from a safer angle before attacking. Prefer this over attacking from a bad angle.",
         "attack": "Fire ONLY if enemy_centered=yes AND health is above 50 AND a safe distance is already maintained. Do NOT attack if it would mean holding position under fire while off-center or at close range.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. ONLY when enemy_centered=yes AND health is above 50, to shoot while moving off the line of fire.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. ONLY when enemy_centered=yes AND health is above 50, to shoot while moving off the line of fire.",
+        "advance_attack": "Advance AND fire simultaneously. Avoid while enemy_visible=yes: closing distance into fire contradicts keeping a safe distance. Only if health is above 80 and enemy_centered=yes.",
     },
     # tactical_p2 ベースに被弾後の連続被弾対策（strafe/後退で射線を切る）を強化
     # health は state_text 上 var0 として渡る。strafe キーは MOVE_LEFT/RIGHT を持つシナリオのみ有効（main で除去される）
@@ -134,18 +181,60 @@ CRITERIA_SETS = {
         "turn_left": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",
         "turn_right": "Rotate to aim at off-center enemies only when health (var0) >= 50. At lower health, strafe or retreat instead of turning under fire.",
         "attack": "Fire if enemy_centered=yes AND health (var0) >= 50. Below 50, prefer strafing or retreating over attacking. Do NOT attack if no enemy is visible.",
+        "strafe_attack_left": "Strafe left AND fire simultaneously. ONLY when enemy_centered=yes AND health (var0) >= 50, to dodge while keeping aim. Do NOT use if no enemy is visible.",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. ONLY when enemy_centered=yes AND health (var0) >= 50, to dodge while keeping aim. Do NOT use if no enemy is visible.",
+        "advance_attack": "Advance AND fire simultaneously. ONLY when enemy_centered=yes AND health (var0) >= 70. Do NOT advance into an enemy's line of fire at lower health.",
     },
     # full_map（遮蔽物・角あり）用：角からの横移動で覗いて撃ち、遮蔽に戻る
     "tactical_peeking": {
-        "move_forward": "Advance through the area. If 'front_blocked=yes', switch to 'use' or turn.",
+        "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path.",
         "use": "Select 'use' ONLY when 'front_blocked=yes' to open doors or operate switches.",
-        "move_left": "Strafe left to peek around corners or dodge back into cover.",
-        "move_right": "Strafe right to peek around corners or dodge back into cover.",
+        "move_left": (
+            "PRIMARY DODGE ACTION. "
+            "Strafe left without firing to dodge or peek when the enemy is not centered. "
+            "When enemy_centered=yes, prefer strafe_attack_left or strafe_attack_right to fire while moving. "
+            "Circle-strafing: alternate left/right to stay unpredictable. "
+            "Only strafe to peek around corners if no enemy is visible."
+        ),
+        "move_right": (
+            "PRIMARY DODGE ACTION. "
+            "Strafe right without firing to dodge or peek when the enemy is not centered. "
+            "When enemy_centered=yes, prefer strafe_attack_left or strafe_attack_right to fire while moving. "
+            "Circle-strafing: alternate left/right to stay unpredictable. "
+            "Only strafe to peek around corners if no enemy is visible."
+        ),
         "turn_left": "Rotate to check corners and align aim with enemies.",
         "turn_right": "Rotate to check corners and align aim with enemies.",
-        "attack": "Fire when an enemy is visible in your line of sight.",
+        "attack": "Fire ONLY when enemy_centered=yes AND no dodge needed. If health (var0) < 70 OR enemy_types includes ChaingunGuy, prefer strafe_attack_left or strafe_attack_right to dodge WHILE firing. Only use plain 'attack' when health is high and enemy is slow.",
+        # ★ 複合アクション: 動きながら撃つ（circle-strafe）
+        "strafe_attack_left": "PRIMARY COMBAT ACTION. Strafe left AND fire simultaneously. Use when enemy_centered=yes to dodge incoming fire while keeping damage output.",
+        "strafe_attack_right": "PRIMARY COMBAT ACTION. Strafe right AND fire simultaneously. Use when enemy_centered=yes to dodge incoming fire while keeping damage output.",
+        "advance_attack": "Advance AND fire simultaneously. Use to close distance on a centered enemy while maintaining pressure.",
     },
 }
+
+# 全方針は同じキー集合を持ち、実行時にシナリオの利用可能ボタンで絞る。
+for _name, _criteria in CRITERIA_SETS.items():
+    CRITERIA_SETS[_name] = {
+        action: _criteria.get(action, DEFAULT_CRITERIA[action])
+        for action in ACTION_DEFINITIONS
+    }
+
+
+def configure_actions(scenario, criteria):
+    """単独・複合を再登録し、実行可能な全候補に方針を適用する。"""
+    actions = get_action_buttons(scenario)
+    if isinstance(criteria, str):
+        base = CRITERIA_SETS.get(criteria, SCENARIO_CRITERIA[scenario])
+    else:
+        base = criteria
+    unknown = set(base) - set(ACTION_DEFINITIONS)
+    if unknown:
+        raise ValueError(f"Unknown actions: {sorted(unknown)}")
+    ACTION_BUTTONS.clear()
+    ACTION_BUTTONS.update(actions)
+    return {name: base.get(name, DEFAULT_CRITERIA[name]) for name in actions}
+
 
 # criteria ごとの敵検出閾値（red_mean > threshold で enemy_visible=yes）
 THRESHOLDS = {
@@ -156,8 +245,11 @@ THRESHOLDS = {
 }
 
 
-def build_payload(state_text: str, criteria: str | dict = "baseline") -> dict:
-    """Jev API に送る payload を組み立てる"""
+BASE_INSTRUCTIONS = "Choose the single best next action for the DOOM agent."
+
+
+def build_payload(state_text: str, criteria: str | dict = "baseline", order: str | None = None) -> dict:
+    """Jev API に送る payload を組み立てる。order は System 3 の指示（criteria は変えない）"""
     if isinstance(criteria, str):
         try:
             criteria_dict = CRITERIA_SETS[criteria]
@@ -179,7 +271,10 @@ def build_payload(state_text: str, criteria: str | dict = "baseline") -> dict:
         "questions": {
             "next_action": {
                 "type": "choice",
-                "instructions": "Choose the single best next action for the DOOM agent.",
+                "instructions": (
+                    f"{BASE_INSTRUCTIONS} Strategic order from the commander: {order}"
+                    if order else BASE_INSTRUCTIONS
+                ),
                 "criteria": dict(criteria_dict),
             }
         },
@@ -191,6 +286,7 @@ def get_jev_decision(
     state_text: str,
     criteria: str | dict = "baseline",
     timeout: float = 2.0,
+    order: str | None = None,
 ) -> dict:
     """Jev API を呼び出して判断を取得する（Session 再利用）"""
     if api_key:
@@ -199,7 +295,7 @@ def get_jev_decision(
         del _SESSION.headers["Authorization"]
     response = _SESSION.post(
         JEV_API_URL,
-        json=build_payload(state_text, criteria=criteria),
+        json=build_payload(state_text, criteria=criteria, order=order),
         timeout=timeout,
     )
     response.raise_for_status()
@@ -254,6 +350,17 @@ def state_to_text(
                 f"enemy_centered={'yes' if info['enemy_centered'] else 'no'}"
             )
             extra_parts.append(f"enemy_types={','.join(info['enemy_names'])}")
+            # ★ enemy_side: 動的中心（解像度対応）
+            ne_x = info.get("nearest_enemy_x")
+            if ne_x is not None:
+                # screen_buffer の幅から動的に取得
+                if state is not None and state.screen_buffer is not None:
+                    _w = state.screen_buffer.shape[2]
+                else:
+                    _w = 160  # フォールバック
+                _center = _w / 2
+                side = "left" if ne_x < _center else "right"
+                extra_parts.append(f"enemy_side={side}")
     if front_blocked is not None:
         extra_parts.append(f"front_blocked={'yes' if front_blocked else 'no'}")
     text = build_state_text(game_vars, red_mean, enemy_visible)
@@ -296,7 +403,7 @@ def should_force_attack(label_info, width_threshold: float = SYSTEM1_WIDTH_THRES
 
 
 def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, allow_system1=True,
-                   front_blocked=None):
+                   front_blocked=None, memory_summary=""):
     """次の行動を決定する。
 
     decide: state_text -> Jev API応答dict（System2）。
@@ -314,6 +421,8 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
         state, game_vars, use_labels=use_labels, min_enemy_width=min_enemy_width,
         front_blocked=front_blocked,
     )
+    if memory_summary:
+        state_text = state_text + f" [Memory: {memory_summary}]"
     choice, probs = extract_choice_and_probs(decide(state_text))
     return choice, "system2", {
         "state_text": state_text,
@@ -396,11 +505,50 @@ def save_screenshot(state, out_dir, episode, hit_num, tic):
     return path
 
 
+# オーバーレイ（tools/overlay.py）が読むステータスファイル。1行 = "TAG|本文"
+# TAG: SYS1=反射層（WallAvoider/ForwardBlockDetector/AreaStagnationDetector/should_force_attack）,
+#      SYS2=Jev, SYS3=Gemini, GAME=視覚・ゲーム状態
+STATUS_FILE = "/tmp/jev_status.txt"
 
-# 付け焼き刃5: スタック判定（STUCK_TICS の間に STUCK_MOVE_EPS 単位以上動かなければ脱出）
-STUCK_TICS = 30
-STUCK_MOVE_EPS = 8.0
-ESCAPE_STEPS = 4  # 脱出行動を続ける判断ステップ数（frame_skip=4 で 16tic）
+
+def _state_field(state_text: str, key: str) -> str:
+    """state_text から key=value の値を取り出す（Jev に渡した内容をそのまま表示するため）"""
+    marker = f"{key}="
+    if marker not in state_text:
+        return "-"
+    return state_text.split(marker, 1)[1].split(",")[0].split()[0]
+
+
+def format_status(*, jev_line: str, reason: str, sys1_events: list[str],
+                  order: str | None, health, info: dict | None, tic: int) -> list[str]:
+    """1判断ステップ分のオーバーレイ表示行を組み立てる"""
+    lines = [f"SYS2|{jev_line}"]
+    if reason:
+        lines.append(f"SYS2|Reason: {reason}")
+    if sys1_events:
+        lines.extend(f"SYS1|{e}" for e in sys1_events)
+    else:
+        lines.append("SYS1|(no reflex)")
+    lines.append(f"SYS3|Commander: {order[:100]}" if order else "SYS3|(no active order)")
+    st = (info or {}).get("state_text", "")
+    enemy = "yes" if (info or {}).get("enemy_visible") else "no"
+    lines.append(f"GAME|HP={int(health)} Enemy={enemy} Centered={_state_field(st, 'enemy_centered')} "
+                 f"Side={_state_field(st, 'enemy_side')} Blocked={_state_field(st, 'front_blocked')}")
+    red = (info or {}).get("red_mean")
+    lines.append(f"GAME|red_mean={red:.1f} tic={tic}" if red is not None else f"GAME|tic={tic}")
+    return lines
+
+
+def write_status(lines: list[str], path: str = STATUS_FILE) -> None:
+    """一時ファイルに書いてから os.replace（オーバーレイが書きかけを読まないよう原子的に置換）"""
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass  # 表示用なのでゲームは止めない
+
 
 
 def main():
@@ -436,6 +584,16 @@ def main():
         action="store_true",
         help="ゲーム音を有効化（観戦時のみ推奨。長時間実験では指定しない）",
     )
+    parser.add_argument(
+        "--recording",
+        action="store_true",
+        help="録画モード: ticrate=35, frame_skip=1、audio_buffer=False（--soundでスピーカー出力）",
+    )
+    parser.add_argument(
+        "--system3",
+        action="store_true",
+        help="System 3（Gemini）をトリガー時のみ非同期で呼び、Jev への instructions に指示を添える",
+    )
 
     args = parser.parse_args()
 
@@ -446,10 +604,14 @@ def main():
 
     # --- シナリオに応じて ACTION_BUTTONS を動的に切り替え ---
     scenario_buttons = SCENARIO_BUTTONS[args.scenario]
-    ACTION_BUTTONS.clear()
-    for btn in scenario_buttons:
-        ACTION_BUTTONS[btn.lower()] = btn
+    filtered_criteria = configure_actions(args.scenario, args.criteria)
     print(f"ACTION_BUTTONS updated: {list(ACTION_BUTTONS.keys())}")
+
+    # API 優先モード: frame_skip 大 + ticrate 低 = API待ちを吸収、カクカク抑制
+    # recording モードでも API 優先（BGM は ffmpeg 後付）
+    frame_skip = 8     # 8tic = 228ms ≒ API 250ms
+    ticrate = 15       # 15 tic/s = 66ms/tic、ゲーム進行を遅く
+    print(f"[MODE] frame_skip={frame_skip} ticrate={ticrate} (API-priority)")
 
     # --- 初期化: 極限軽量化 ---
     game = vzd.DoomGame()
@@ -461,22 +623,41 @@ def main():
         game.set_available_buttons([getattr(vzd.Button, b) for b in scenario_buttons])
         game.set_available_game_variables([vzd.GameVariable.HEALTH])
         game.set_episode_timeout(full_map["episode_timeout"])
-        game.set_render_hud(False)
-        game.set_render_messages(False)
+        game.set_render_hud(True)
+        game.set_render_messages(True)
         game.set_render_screen_flashes(False)
-        game.set_audio_buffer_enabled(False)
     else:
         game.load_config(f"{vzd.scenarios_path}/{args.scenario}.cfg")
     # 撃破数を取得（cfg書き換え不要。HEALTH の後に KILLCOUNT が追加される）
     game.add_available_game_variable(vzd.GameVariable.KILLCOUNT)
+    try:
+        game.add_available_game_variable(vzd.GameVariable.POSITION_Z)
+    except Exception:
+        pass
     game.set_window_visible(True)  # ウィンドウ表示（リアルタイム可視化が要件のためTrueを維持）
-    game.set_sound_enabled(args.sound)  # --sound 指定時のみ音声オン（initより前）
-    game.set_screen_resolution(vzd.ScreenResolution.RES_160X120)
-    game.set_depth_buffer_enabled(False)
+    game.set_sound_enabled(args.sound)
+    # スピーカー出力を維持し、PulseAudioで録音できるようにする。
+    # 録画時はticrate=35、frame_skip=1を使用する。
+    game.set_audio_buffer_enabled(False)
+    # BGM は ffmpeg 後付のため、ゲーム内 BGM は無効
+    # if args.sound:
+    #     game.add_game_args("+snd_musicvolume 0.5")
+    game.set_screen_resolution(vzd.ScreenResolution.RES_320X240)
+    game.set_depth_buffer_enabled("use" in ACTION_BUTTONS)  # 壁回避（WallAvoider）用
     game.set_labels_buffer_enabled(args.use_labels)  # labels検出を使う場合のみ有効化
     game.set_automap_buffer_enabled(False)
-    game.set_ticrate(35)
+    # 鍵イベント検出用（WorldMemory・System 3）。バッファは直近N tic分なので frame_skip に合わせると取りこぼし・重複がない
+    game.set_notifications_buffer_enabled(True)
+    game.set_notifications_buffer_size(frame_skip)
+    game.set_ticrate(ticrate)
     game.init()
+    if args.sound:
+        # このViZDoomのFluidSynthはlibfluidsynth.so.1を要求する。
+        # 内蔵OPLなら追加ライブラリ不要。負値は起動引数でなく実行時に設定する。
+        game.send_game_command("snd_mididevice -3")
+        # BGM は ffmpeg 後付のため、ゲーム内 BGM は無効
+        # game.send_game_command("snd_musicvolume 0.5")
+        # print("[BGM] enabled: built-in OPL, volume=0.5")
 
     n_buttons = game.get_available_buttons_size()
     button_names = [str(b).split(".")[-1] for b in game.get_available_buttons()]
@@ -484,25 +665,18 @@ def main():
 
     # 固定メモリ
     action_vec = [0] * n_buttons
-    frame_skip = 4  # A方針：反応速度優先（114ms/step）
     decision_interval_tic = 4  # 何ticごとにJevに聞くか（毎アクションごとに判断）
-    
+
+    sys3 = StrategicCoreSystem3() if args.system3 else None
+    if sys3 is not None:
+        sys3.start()
+
     viz = JevVisualizer()
     episode = 0
     choice = "move_forward"
     last_reward = 0.0
 
-    # シナリオのボタンに存在しない criteria キーを除去（エピソード共通）
-    if isinstance(args.criteria, str):
-        base_criteria = CRITERIA_SETS.get(
-            args.criteria, SCENARIO_CRITERIA[args.scenario]
-        )
-    else:
-        base_criteria = args.criteria
-    filtered_criteria = {
-        k: v for k, v in base_criteria.items()
-        if k in ACTION_BUTTONS
-    }
+    print(f"Jev candidates: {list(filtered_criteria)}")
 
     while episode < 5:  # 5エピソード実行
         game.new_episode()
@@ -520,12 +694,14 @@ def main():
         # USE を持つシナリオのみ front_blocked を state_text に載せる（他シナリオの入力は不変）
         block_detector = ForwardBlockDetector() if "use" in ACTION_BUTTONS else None
         front_blocked = None
-        # 付け焼き刃: 旋回時の同時押しボタンと、スタック脱出の状態
-        extra_buttons = []
-        _last_pos = None
-        _stuck_since = 0
-        _escape_dir = None
-        _escape_left = 0
+        world_memory = WorldMemory()
+        elevation = ElevationTracker()
+        door_waiter = DoorWaiter(wait_tic=30)
+        wall_avoider = WallAvoider() if block_detector is not None else None
+        visited_cells = set()  # ★ 探索セル
+        GRID_SIZE = 128
+        stagnation_detector = AreaStagnationDetector() if sys3 is not None else None
+        order = None
 
         while not game.is_episode_finished():
             # 判断フレームのみ get_state() を呼ぶ
@@ -533,6 +709,7 @@ def main():
                 state = game.get_state()
                 if state is None:
                     break
+                sys1_events = []  # オーバーレイ用: このステップで反射層が動いた記録
                 game_vars = list(state.game_variables)
                 health = game_vars[0] if game_vars else 0
                 if len(game_vars) > 1:
@@ -556,15 +733,56 @@ def main():
                         hit_count,
                         tic_counter,
                     )
+                position = (game.get_game_variable(vzd.GameVariable.POSITION_X),
+                            game.get_game_variable(vzd.GameVariable.POSITION_Y))
+                try:
+                    position_z = game.get_game_variable(vzd.GameVariable.POSITION_Z)
+                except Exception:
+                    position_z = 0.0
+                # ─── WorldMemory + Elevation 更新 ───
+                world_memory.update(position, tic_counter,
+                                    notifications=state.notifications_buffer or "",  # str（bytes ではない）
+                                    front_blocked=bool(front_blocked))
+                elevation.update(position_z)
+                # ★ 探索セル記録
+                visited_cells.add((int(position[0]) // 128, int(position[1]) // 128))
                 # この時点の choice は前回の判断で実行済みの行動
                 if block_detector is not None:
-                    front_blocked = block_detector.update(
-                        (game.get_game_variable(vzd.GameVariable.POSITION_X),
-                         game.get_game_variable(vzd.GameVariable.POSITION_Y)),
-                        choice,
-                    )
+                    front_blocked = block_detector.update(position, choice)
+                    if front_blocked:
+                        sys1_events.append("ForwardBlock: front_blocked=yes")
+
+                # System 3: トリガー発生時のみ非同期推論を依頼し、有効な指示を受け取る
+                if sys3 is not None:
+                    key_events = extract_key_events(state.notifications_buffer)
+                    triggers = []
+                    if front_blocked:
+                        triggers.append(TRIGGER_FRONT_BLOCKED)
+                    if stagnation_detector.update(position):
+                        triggers.append(TRIGGER_AREA_STAGNATION)
+                        sys1_events.append("AreaStagnation: stuck in area")
+                    if key_events:
+                        triggers.append(TRIGGER_KEY_EVENT)
+                    sys3_state = {
+                        "health": int(health),
+                        "kills": last_kills,
+                        "front_blocked": bool(front_blocked),
+                        "position": [round(position[0]), round(position[1])],
+                        "angle": round(game.get_game_variable(vzd.GameVariable.ANGLE)),
+                        "key_events": key_events,
+                    }
+                    if args.use_labels:
+                        label_info = detect_enemy_from_labels(state, min_width=args.min_width)
+                        sys3_state["enemy_visible"] = label_info["enemy_visible"]
+                        sys3_state["enemy_count"] = label_info["enemy_count"]
+                    sys3.update_state(sys3_state, triggers)
+                    order = sys3.get_current_instruction()
+
+                # ─── WorldMemory 要約を state_text に追加（resolve_action 内で）───
+                memory_summary = world_memory.get_summary()
 
                 info = None
+                jev_line, reason = "(no decision)", ""
                 try:
                     choice, source, info = resolve_action(
                         state,
@@ -572,16 +790,21 @@ def main():
                         use_labels=args.use_labels,
                         min_enemy_width=args.min_width if args.use_labels else 0.0,
                         decide=lambda text: get_jev_decision(
-                            api_key, text, criteria=filtered_criteria, timeout=1.0
+                            api_key, text, criteria=filtered_criteria, timeout=1.0,
+                            order=order,
                         ),
                         allow_system1=not prev_system1,
                         front_blocked=front_blocked,
+                        memory_summary=memory_summary,
                     )
                     prev_system1 = (source == "system1")
                     if source == "system1":
                         system1_count += 1
                         print(f"step={tic_counter} [System1] FORCED attack "
                               f"(centered, width={info['nearest_enemy_width']:.0f})")
+                        jev_line = "(bypassed by System 1)"
+                        sys1_events.append(
+                            f"force_attack (width={info['nearest_enemy_width']:.0f})")
                     else:
                         system2_count += 1
                         viz.log(info["probs"], last_reward, health)
@@ -589,56 +812,94 @@ def main():
                               f"red_mean={info['red_mean']:.1f} | "
                               f"enemy_visible={'yes' if info['enemy_visible'] else 'no'}")
                         print(f"    state_text: {info['state_text']}")
+                        if order:
+                            print(f"    order(System3): {order}")
+                        jev_line = f"Jev -> {choice}"
+                        reason = filtered_criteria.get(choice, "")[:80]
                 except Exception as e:
                     print(f"[skip] {e}")
+                    jev_line = f"[skip] {str(e)[:60]}"
 
-                # 付け焼き刃5: 30tic 位置がほぼ変わらなければ 右→左→後退 の順に脱出を試す
-                pos = (game.get_game_variable(vzd.GameVariable.POSITION_X),
-                       game.get_game_variable(vzd.GameVariable.POSITION_Y))
-                # 敵視認中は立ち止まって撃つのが正常なのでスタック扱いしない
-                enemy_now = info is not None and info.get("enemy_visible")
-                if enemy_now or _last_pos is None or math.dist(pos, _last_pos) > STUCK_MOVE_EPS:
-                    _last_pos, _stuck_since = pos, tic_counter
-                elif _escape_left == 0 and tic_counter - _stuck_since >= STUCK_TICS:
-                    order_ = ["move_right", "move_left", "move_backward"]
-                    _escape_dir = order_[(order_.index(_escape_dir) + 1) % 3] if _escape_dir in order_ else order_[0]
-                    _escape_left = ESCAPE_STEPS
-                    _stuck_since = tic_counter
-                    print(f"step={tic_counter} [Stuck] {STUCK_TICS}tic 停止 -> {_escape_dir}")
-                if _escape_left > 0:
-                    _escape_left -= 1
-                    choice = _escape_dir
+                # 反射層（Jev の判断の後）：壁に向かう前進を止める。地点ごとに use 1回、以後は開けた側へ旋回
+                if wall_avoider is not None:
+                    steered = wall_avoider.filter(choice, state.depth_buffer, position, front_blocked)
+                    if steered != choice:
+                        print(f"step={tic_counter} [Reflex] {choice} -> {steered} (wall ahead)")
+                        sys1_events.append(f"WallAvoider: {choice} -> {steered}")
+                        choice = steered
 
-                # 付け焼き刃1: その場で旋回しない。旋回には同方向の横移動を同時押し、敵視認中は射撃も
-                extra_buttons = []
-                if choice in ("turn_left", "turn_right"):
-                    extra_buttons.append("MOVE_LEFT" if choice == "turn_left" else "MOVE_RIGHT")
-                    if info is not None and info.get("enemy_visible"):
-                        extra_buttons.append("ATTACK")
+                write_status(format_status(
+                    jev_line=jev_line, reason=reason, sys1_events=sys1_events,
+                    order=order, health=health, info=info, tic=tic_counter,
+                ))
 
-            # ボタンベクトルを再利用
-            for i in range(n_buttons):
-                action_vec[i] = 0
-            target = ACTION_BUTTONS.get(choice, "MOVE_FORWARD")
-            if target in button_names:
-                action_vec[button_names.index(target)] = 1
-            for b in extra_buttons:
-                if b in button_names:
-                    action_vec[button_names.index(b)] = 1
+            # 候補登録と同じ辞書を使い、複合の全ボタンを同時押しする。
+            action_vec[:] = build_action_vector(choice, button_names, ACTION_BUTTONS)
+            target = ACTION_BUTTONS[choice]
 
-            # フレームスキップで進める（USE はタップ）
-            last_reward = execute_action(
-                game, action_vec, frame_skip, tap=(target == "USE")
-            )
+            # ドア待機中は前進・旋回を抑制
+            if door_waiter.is_waiting():
+                if not door_waiter.tick(frame_skip):
+                    print(f"step={tic_counter} [DoorWait] done")
+                # 待機中は行動せず、その場で待つ
+                last_reward = game.make_action([0] * n_buttons, frame_skip)
+            else:
+                # フレームスキップで進める（USE はタップ）
+                last_reward = execute_action(
+                    game, action_vec, frame_skip, tap=(target == "USE")
+                )
+                # ─── use 実行後にドア待機開始（実行前に start すると同ステップで待機に入り USE が消える）───
+                if target == "USE":
+                    door_waiter.start()
             tic_counter += frame_skip
 
         # P1: エピソード終了時の被弾サマリー
+        # SSOT: I_EXIT = 1 は「timeout前 + 生存」
+        # ★ 死亡判定: エピソードが早期終了（timeout=2100未満）したら死亡扱い
+        # （現在、EXIT到達判定は未実装のため、早期終了 = 死亡と見なす）
+        episode_ended_early = (tic_counter < 2100)
+        
+        # より正確な health 取得を試みる
+        final_health = prev_health
+        try:
+            if game.is_episode_finished():
+                # 最後の state を取得できる場合がある
+                _fs = game.get_state()
+                if _fs is not None and len(_fs.game_variables) > 0:
+                    final_health = int(_fs.game_variables[0])
+        except Exception:
+            pass
+        
+        is_dead = episode_ended_early or (final_health <= 0)
+        
+        # ★ ゲームオーバー画面を保持（人間が目視できるように）
+        if is_dead and episode_ended_early:
+            print(f"[GAME OVER] Episode {episode} - 死亡（early end at tic={tic_counter}）。10秒保持")
+            import time as _time
+            for _i in range(10):
+                _time.sleep(1)
+                print(f"  ...{_i+1}/10")
+            print("[GAME OVER] 次のエピソードへ")
+        elif tic_counter >= 2100:
+            print(f"[TIMEOUT] Episode {episode} - タイムアウト（生存）。5秒待機")
+            import time as _time
+            for _i in range(5):
+                _time.sleep(1)
+                print(f"  ...{_i+1}/5")
+        
+        i_exit = 1 if (not is_dead and tic_counter < 2100) else 0
         print(f"Episode {episode} done: hits={hit_count}, "
               f"final_health={prev_health}, steps={tic_counter}, "
               f"sys1={system1_count}, sys2={system2_count}, "
-              f"kills={last_kills}")
+              f"kills={last_kills}, visited_cells={len(world_memory.visited_cells)}, "
+              f"max_distance={world_memory.max_distance:.0f}, "
+              f"keys={len(world_memory.keys_obtained)}, "
+              f"dead_ends={len(world_memory.dead_ends)}, "
+              f"i_exit={i_exit}")
         episode += 1
 
+    if sys3 is not None:
+        sys3.stop()
     game.close()
     viz.save("jev_visualization.png")
 
