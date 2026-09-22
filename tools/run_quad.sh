@@ -1,12 +1,14 @@
 #!/bin/bash
 # QUAD SYSTEM: Jev + Gemini(System 3) + 反射層 + 視覚 を色分けオーバーレイ付きで実行し、
 # DOOM ウィンドウ + オーバーレイの領域だけを録画する
-# 使い方: ./tools/run_quad.sh [criteria=tactical_peeking] [録画秒数=60]
+# 使い方: ./tools/run_quad.sh [criteria=tactical_peeking] [録画秒数=60] [jev_agent.py への追加引数...]
 set -e
 cd "$(dirname "$0")/.."
 
 CRITERIA="${1:-tactical_peeking}"
 DURATION="${2:-60}"
+shift 2 2>/dev/null || shift $#
+EXTRA_ARGS=("$@")  # 例: --no-door-fix
 DISPLAY_NUM="${DISPLAY:-:1}"
 MONITOR=$(pactl get-default-sink).monitor
 TS=$(date +%Y%m%d_%H%M%S)
@@ -49,7 +51,7 @@ fi
 
 # ─── Phase 2: jev_agent 起動（--system3 必須: Gemini スレッドはこのフラグでのみ起動）───
 DISPLAY="$DISPLAY_NUM" setsid nohup python -u train/jev_agent.py \
-    --scenario full_map --criteria "$CRITERIA" --use-labels --sound --system3 \
+    --scenario full_map --criteria "$CRITERIA" --use-labels --sound --system3 "${EXTRA_ARGS[@]}" \
     < /dev/null > "$JEV_LOG" 2>&1 &
 JEV_PID=$!
 echo "$JEV_PID" >> "$PID_FILE"

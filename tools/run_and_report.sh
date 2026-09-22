@@ -81,6 +81,10 @@ for line in lines:
             "keys": kv.get("keys", 0),
             "dead_ends": kv.get("dead_ends", 0),
             "i_exit": kv.get("i_exit", 0),
+            "kills_total": kv.get("kills_total", 0),
+            "ammo_used": kv.get("ammo_used", 0),
+            "attack_steps": kv.get("attack_steps", 0),
+            "dmg_hits": kv.get("dmg_hits", 0),
         })
     elif "!!! HIT" in line:
         hm = re.search(r'HIT #(\d+) at step=(\d+): (\d+) -> (\d+)', line)
@@ -111,6 +115,11 @@ if episodes:
         "avg_dead_ends": sum(e["dead_ends"] for e in episodes) / n,
         "avg_i_exit": sum(e["i_exit"] for e in episodes) / n,
         "exits": sum(e["i_exit"] for e in episodes),
+        "kills_total": max(e["kills_total"] for e in episodes),
+        "full_clears": sum(1 for e in episodes if e["kills_total"] and e["kills"] >= e["kills_total"]),
+        "avg_ammo_used": sum(e["ammo_used"] for e in episodes) / n,
+        "avg_attack_steps": sum(e["attack_steps"] for e in episodes) / n,
+        "avg_dmg_hits": sum(e["dmg_hits"] for e in episodes) / n,
     }
     if summary["avg_sys1"] + summary["avg_sys2"] > 0:
         summary["sys2_ratio"] = summary["avg_sys2"] / (summary["avg_sys1"] + summary["avg_sys2"])
