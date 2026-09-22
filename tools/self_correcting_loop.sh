@@ -28,7 +28,7 @@ CHAMPION_SCORE=$(python -c "
 import json
 d = json.load(open('$LOG_DIR/champion.json'))
 s = d['summary']
-# スコア = hits が少ないほど良い、health が高いほど良い、steps が長いほど良い
+# スコア = hits が少ないほど良い、health が高いほど良い、steps が長いほど減点（過剰な後退・停滞の防止）
 score = -s['avg_hits'] * 100 + s['avg_health'] - s['avg_steps'] * 0.1
 print(f'{score:.2f}')
 ")
@@ -43,9 +43,14 @@ git tag -f "champion" HEAD >/dev/null
 
 # --- ループ ---
 for i in $(seq 1 "$MAX_ITER"); do
+    # 停止条件（continue 経由の失敗も拾うためループ先頭で判定）
+    if [ "$CONSECUTIVE_FAIL" -ge "$MAX_CONSECUTIVE_FAIL" ]; then
+        break
+    fi
+
     log ""
     log "═══════ Iteration $i / $MAX_ITER ═══════"
-    
+
     # 直前の状態を記録
     git tag -f "iter_${i}_before" HEAD >/dev/null
     cp experiments/auto_logs/latest_report.json "$LOG_DIR/iter${i}_before.json" 2>/dev/null || true
@@ -77,10 +82,21 @@ $(cat "$LOG_DIR/iter${i}_next.md")
 - 新しい criteria の追加のみ
 - 完了したら「DONE」と出力"
 
+    CLAUDE_RC=0
     timeout 600 claude -p "$PROMPT" \
         --allowed-tools "Read,Edit,Write,Bash(python*),Bash(pytest*),Bash(ls*),Bash(cat*),Bash(grep*)" \
-        > "$LOG_DIR/iter${i}_claude.log" 2>&1 || true
-    
+        > "$LOG_DIR/iter${i}_claude.log" 2>&1 || CLAUDE_RC=$?
+
+    # 判定より前に保存（失敗時は直後の checkout で変更が消えるため）
+    git diff -- train/ tests/ > "$LOG_DIR/iter${i}_diff.patch" 2>/dev/null || true
+
+    if [ "$CLAUDE_RC" -eq 124 ]; then
+        log "  ⚠ Claude Code タイムアウト (600s)。ログ: $LOG_DIR/iter${i}_claude.log"
+    elif [ "$CLAUDE_RC" -ne 0 ]; then
+        log "  ⚠ Claude Code 終了コード=$CLAUDE_RC。ログ: $LOG_DIR/iter${i}_claude.log"
+        log "    最終行: $(tail -n 1 "$LOG_DIR/iter${i}_claude.log" 2>/dev/null)"
+    fi
+
     # 実装確認
     if ! grep -q "\"$NEXT_CRITERIA\"" train/jev_agent.py; then
         log "  ❌ $NEXT_CRITERIA が追加されていない。スキップ"
@@ -122,6 +138,7 @@ except Exception:
         log "  ✅ 改善！新チャンピオン: $NEXT_CRITERIA"
         CHAMPION_SCORE="$NEW_SCORE"
         CHAMPION_CRITERIA="$NEXT_CRITERIA"
+        cp "$LOG_DIR/iter${i}_result.json" "$LOG_DIR/champion.json"
         git add train/jev_agent.py
         git commit -m "champion: $NEXT_CRITERIA score=$NEW_SCORE" 2>/dev/null || true
         git tag -f "champion" HEAD >/dev/null
@@ -129,17 +146,14 @@ except Exception:
     else
         log "  ❌ 悪化。ロールバック"
         git checkout train/jev_agent.py
-        git reset --hard "iter_${i}_before" >/dev/null 2>&1 || true
         CONSECUTIVE_FAIL=$((CONSECUTIVE_FAIL + 1))
     fi
-    
-    # 停止条件
-    if [ "$CONSECUTIVE_FAIL" -ge "$MAX_CONSECUTIVE_FAIL" ]; then
-        log ""
-        log "🛑 $MAX_CONSECUTIVE_FAIL 回連続で失敗。停止"
-        break
-    fi
 done
+
+if [ "$CONSECUTIVE_FAIL" -ge "$MAX_CONSECUTIVE_FAIL" ]; then
+    log ""
+    log "🛑 $MAX_CONSECUTIVE_FAIL 回連続で失敗。停止"
+fi
 
 # --- 最終レポート ---
 log ""
@@ -157,4 +171,4 @@ print(f'  {d[\"criteria\"]:<20} hits={s[\"avg_hits\"]:.2f} health={s[\"avg_healt
 done
 log ""
 log "Results: $LOG_DIR"
-log "ロールバック: git reset --hard champion"
+log "ロールバック: git checkout champion -- train/jev_agent.py"

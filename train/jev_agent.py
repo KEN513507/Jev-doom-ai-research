@@ -450,7 +450,7 @@ def main():
         if k in ACTION_BUTTONS
     }
 
-    while episode < 3:  # 3エピソード実行
+    while episode < 5:  # 5エピソード実行
         game.new_episode()
         print(f"--- Episode {episode} ---")
         tic_counter = 0
