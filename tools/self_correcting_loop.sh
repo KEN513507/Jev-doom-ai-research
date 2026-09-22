@@ -9,6 +9,13 @@ SCENARIO="${3:-deadly_corridor}"
 CONSECUTIVE_FAIL=0
 MAX_CONSECUTIVE_FAIL=3
 
+# D4 決定（2026-09-23）: 未コミットの追跡変更があれば中止。クリーンなら続行
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "🛑 未コミットの変更があります。コミットしてから起動してください。" >&2
+    git status --short >&2
+    exit 1
+fi
+
 LOG_DIR="experiments/self_correct_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOG_DIR"
 MASTER="$LOG_DIR/master.log"
@@ -23,7 +30,7 @@ log "Scenario: $SCENARIO"
 
 # 初期実行
 log "[Init] Establishing champion baseline..."
-./tools/run_and_report.sh "$CURRENT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/init.log" 2>&1 || true
+SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$CURRENT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/init.log" 2>&1 || true
 cp experiments/auto_logs/latest_report.json "$LOG_DIR/champion.json"
 
 # スコア式は tools/score_report.py に一元化（シナリオ対応）
@@ -100,21 +107,21 @@ $(cat "$LOG_DIR/iter${i}_next.md")
     # 実装確認
     if ! grep -q "\"$NEXT_CRITERIA\"" train/jev_agent.py; then
         log "  ❌ $NEXT_CRITERIA が追加されていない。スキップ"
-        git checkout train/jev_agent.py
+        git stash push -m "loop-rollback: $LOG_DIR iter ${i:-?}" -- train/jev_agent.py >/dev/null || git checkout train/jev_agent.py
         CONSECUTIVE_FAIL=$((CONSECUTIVE_FAIL + 1))
         continue
     fi
     
     if ! python -m py_compile train/jev_agent.py 2>/dev/null; then
         log "  ❌ コンパイル失敗。ロールバック"
-        git checkout train/jev_agent.py
+        git stash push -m "loop-rollback: $LOG_DIR iter ${i:-?}" -- train/jev_agent.py >/dev/null || git checkout train/jev_agent.py
         CONSECUTIVE_FAIL=$((CONSECUTIVE_FAIL + 1))
         continue
     fi
     
     # --- Step 3: 実行 ---
     log "[3/4] Running $NEXT_CRITERIA..."
-    ./tools/run_and_report.sh "$NEXT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/iter${i}_run.log" 2>&1 || true
+    SKIP_GEMINI_ANALYZE=1 ./tools/run_and_report.sh "$NEXT_CRITERIA" --scenario "$SCENARIO" > "$LOG_DIR/iter${i}_run.log" 2>&1 || true
     cp experiments/auto_logs/latest_report.json "$LOG_DIR/iter${i}_result.json" 2>/dev/null || true
 
     NEW_SCORE=$(python tools/score_report.py "$LOG_DIR/iter${i}_result.json")
@@ -136,7 +143,7 @@ $(cat "$LOG_DIR/iter${i}_next.md")
         CONSECUTIVE_FAIL=0
     else
         log "  ❌ 悪化。ロールバック"
-        git checkout train/jev_agent.py
+        git stash push -m "loop-rollback: $LOG_DIR iter ${i:-?}" -- train/jev_agent.py >/dev/null || git checkout train/jev_agent.py
         CONSECUTIVE_FAIL=$((CONSECUTIVE_FAIL + 1))
     fi
 done

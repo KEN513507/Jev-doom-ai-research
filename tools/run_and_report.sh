@@ -155,3 +155,13 @@ python tools/analyze_log.py "$LOG" --merge "$JSON" || echo "⚠ analyze_log 失�
 
 # 最新レポートへのシンボリックリンク
 ln -sf "$JSON" "$LOGDIR/latest_report.json"
+
+# Gemini による分析と次の一手の提案（レポートの隣に *_analysis.json、experiments/auto_logs/next_action.md）
+# 無効な実行は分析しない。self_correcting_loop は自分で分析を呼ぶので SKIP_GEMINI_ANALYZE=1 で重複を避ける
+if [ "$VALID" = "1" ] && [ -z "$SKIP_GEMINI_ANALYZE" ] && [ -n "$GEMINI_API_KEY" ]; then
+    python tools/gemini_analyze.py "$JSON" 2>/dev/null | tail -n 3 || echo "⚠ gemini_analyze 失敗（レポート本体は有効）" >&2
+elif [ "$VALID" != "1" ]; then
+    echo "⚠ 無効な実行のため Gemini 分析を省略" >&2
+elif [ -z "$GEMINI_API_KEY" ]; then
+    echo "⚠ GEMINI_API_KEY 未設定のため Gemini 分析を省略" >&2
+fi
