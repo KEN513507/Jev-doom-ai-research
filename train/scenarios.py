@@ -72,7 +72,9 @@ def build_action_vector(choice, button_names, actions):
 # 同梱 .cfg 名とシナリオ名が一致しないフルマップ用の設定
 # freedoom2.cfg はゲーム変数なし・19ボタン・126000tic上限のため main 側で上書きする
 FULL_MAP_SCENARIOS = {
-    "full_map": {"cfg": "freedoom2.cfg", "map": "map01", "episode_timeout": 2100},
+    # skill 3 の MAP01 の敵は 18体（Zombieman 11, ShotgunGuy 4, Imp 3。WAD の THINGS から実測）= 全滅目標
+    "full_map": {"cfg": "freedoom2.cfg", "map": "map01", "episode_timeout": 2100,
+                 "skill": 3, "monsters_total": 18},
 }
 
 
