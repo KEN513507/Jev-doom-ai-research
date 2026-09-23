@@ -50,7 +50,10 @@ done
 
 python - "$LOG" "$JSON" "$CRITERIA" "$SCENARIO" "$VALID" << 'PYEOF'
 import sys, re, json
+from collections import Counter
 from pathlib import Path
+sys.path.insert(0, "tools")
+from analyze_log import parse_episode_end  # level_clear の判定（fail closed）は1か所に集約
 
 log_path, json_path, criteria, scenario = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 valid = sys.argv[5] == "1"
@@ -58,8 +61,13 @@ lines = Path(log_path).read_text().splitlines()
 
 episodes = []
 hits_events = []
+run_ids = []  # 1プロセス1つ（PHASE0監査で欠落が判明、report のトップレベルに記録）
 
 for line in lines:
+    rm = re.match(r'run_id=(\S+)', line)
+    if rm:
+        run_ids.append(rm.group(1))
+        continue
     m = re.search(r'Episode (\d+) done: (.*)', line)
     if m:
         # key=value を個別に読む（連結した任意グループだと1項目のずれで後続が全て0になる）
@@ -91,8 +99,11 @@ for line in lines:
             "seed": kv.get("seed", -1),
             "jev_latency_median": kv.get("jev_latency_median", -1),
             "died": kv.get("died"),
-            "exit_candidate": kv.get("exit_candidate", 0),
+            "exit_candidate": kv.get("exit_candidate", 0),  # legacy/診断用。level_clear ではない
+            **parse_episode_end(line),  # end_reason, level_clear, timeout_reached
             "stuck_timeout": kv.get("stuck_timeout"),
+            "visual_places": kv.get("visual_places"),
+            "visual_transitions": kv.get("visual_transitions"),
         })
     elif "!!! HIT" in line:
         hm = re.search(r'HIT #(\d+) at step=(\d+): (\d+) -> (\d+)', line)
@@ -133,6 +144,10 @@ if episodes:
         "deaths": sum(1 for e in episodes if (e["died"] if e["died"] is not None else e["final_health"] <= 0)),
         "ammo_outs": sum(1 for e in episodes if e["ammo_min"] == 0),
         "exit_candidates": sum(e["exit_candidate"] for e in episodes),
+        "level_clears": sum(e["level_clear"] for e in episodes),  # ViZDoom 終了フラグ由来の ground truth
+        "end_reasons": dict(Counter(e["end_reason"] for e in episodes)),
+        "avg_visual_places": (sum(e["visual_places"] for e in episodes) / n
+                              if all(e["visual_places"] is not None for e in episodes) else None),
         "seeds": [e["seed"] for e in episodes],
         "avg_jev_latency_median": (sum(e["jev_latency_median"] for e in episodes) / n
                                    if all(e["jev_latency_median"] >= 0 for e in episodes) else None),
@@ -143,6 +158,7 @@ if episodes:
         summary["sys2_ratio"] = 0.0
 
 result = {
+    "run_id": run_ids[0] if run_ids else None,  # $LOG は毎試行 > で上書きなので高々1個のはず
     "criteria": criteria,
     "scenario": scenario,
     "valid": valid,

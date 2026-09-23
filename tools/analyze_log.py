@@ -21,7 +21,30 @@ RE_SYS1 = re.compile(r"^step=(\d+) \[System1\] FORCED attack")
 RE_REFLEX = re.compile(r"^step=(\d+) \[Reflex\] ([a-z_]+) -> ([a-z_]+)")
 RE_USEFAIL = re.compile(r"^step=(\d+) \[UseFail\].* -> ([a-z_]+)")
 RE_HIT = re.compile(r"^!!! HIT #\d+ at step=(\d+): (-?\d+) -> (-?\d+)")
+RE_PLACE_MATCH = re.compile(r"^PLACE_MATCH id=(\d+) visits=(\d+)")
 RE_SIDE = re.compile(r"enemy_side=(left|right)")
+RE_END_REASON = re.compile(r"\bend_reason=([a-z_]+)")
+RE_LEVEL_CLEAR = re.compile(r"\blevel_clear=(\d+)")
+RE_TIMEOUT_REACHED = re.compile(r"\btimeout_reached=(\d+)")
+END_REASONS = {"level_clear", "death", "timeout", "aborted", "unknown"}
+
+
+def parse_episode_end(done_line: str) -> dict:
+    """"Episode N done:" 行から end_reason・level_clear を読む（fail closed）。
+
+    level_clear=1 は end_reason=level_clear と level_clear=1 が両方あるときだけ。
+    項目がない旧ログ・値の食い違い・未知の end_reason は level_clear=0, end_reason=unknown。
+    exit_candidate は読まない（legacy の代理指標で、level_clear の根拠にしない）。
+    """
+    m_reason = RE_END_REASON.search(done_line)
+    m_clear = RE_LEVEL_CLEAR.search(done_line)
+    m_timeout = RE_TIMEOUT_REACHED.search(done_line)
+    reason = m_reason.group(1) if m_reason else "unknown"
+    clear = int(m_clear.group(1)) if m_clear else 0
+    if reason not in END_REASONS or (clear == 1) != (reason == "level_clear"):
+        reason, clear = "unknown", 0
+    return {"end_reason": reason, "level_clear": clear,
+            "timeout_reached": int(m_timeout.group(1)) if m_timeout else None}
 
 
 def split_episodes(lines: list[str]) -> dict[int, list[str]]:
@@ -58,7 +81,8 @@ def analyze_episode(lines: list[str]) -> dict:
     decisions = []  # 判断ごとの {"jev", "final", "enemy", "side"}
     hits = []  # (step, before, after)
     counts = {"stuck_timeout": 0, "stuck": 0, "turn_move": 0, "use_fail": 0, "door_opened": 0, "door_no_door": 0,
-              "wall_shot": 0, "skip": 0, "sys3_calls": 0, "sys3_errors": 0, "system1": 0}
+              "wall_shot": 0, "skip": 0, "sys3_calls": 0, "sys3_errors": 0, "system1": 0,
+              "place_new": 0, "place_revisit": 0, "place_transition": 0, "visual_stagnation": 0}
     for i, line in enumerate(lines):
         m = RE_JEV.match(line)
         if m:
@@ -105,6 +129,14 @@ def analyze_episode(lines: list[str]) -> dict:
             counts["sys3_calls"] += 1
         elif "[System 3] Gemini error" in line:
             counts["sys3_errors"] += 1
+        elif line.startswith("PLACE_NEW"):
+            counts["place_new"] += 1
+        elif RE_PLACE_MATCH.match(line):
+            counts["place_revisit"] += 1
+        elif line.startswith("PLACE_TRANSITION"):
+            counts["place_transition"] += 1
+        elif line.startswith("STAGNATION=YES"):
+            counts["visual_stagnation"] += 1
 
     jev = [d["jev"] for d in decisions if d["jev"]]
     final = [d["final"] for d in decisions]
@@ -148,6 +180,11 @@ def analyze_episode(lines: list[str]) -> dict:
         "D3_sys3_errors": counts["sys3_errors"],
         "A4_damage_taken_log": sum(max(0, b - a) for _, b, a in hits),
         "A4_hits_log": len(hits),
+        # Sprint 1（座標不使用の視覚記憶、2026-09-23）: place_new+place_revisit = 判断のたびの照合回数（新規+既知）
+        "V1_place_new": counts["place_new"],
+        "V1_place_revisit": counts["place_revisit"],
+        "V2_place_transitions": counts["place_transition"],
+        "V3_visual_stagnation": counts["visual_stagnation"],
     }
 
 

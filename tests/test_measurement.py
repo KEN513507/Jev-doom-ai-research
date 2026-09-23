@@ -88,6 +88,66 @@ class TestAnalyzeLog(unittest.TestCase):
         self.assertAlmostEqual(self.r["D2_skip_rate"], 1 / 10)
         self.assertEqual(self.r["D3_sys3_calls"], 1)
 
+    def test_no_visual_lines_means_zero(self):
+        # LOG フィクスチャに PLACE_* 行がない（Sprint 1 未接続のログ）→ 0 のまま
+        self.assertEqual(self.r["V1_place_new"], 0)
+        self.assertEqual(self.r["V1_place_revisit"], 0)
+        self.assertEqual(self.r["V2_place_transitions"], 0)
+        self.assertEqual(self.r["V3_visual_stagnation"], 0)
+
+
+VISUAL_LOG = """\
+--- Episode 0 ---
+PLACE_NEW id=0
+step=0 Jev -> move_forward | red_mean=40.0 | enemy_visible=no
+    state_text: x
+PLACE_NEW id=1
+PLACE_TRANSITION 0 -> 1 action=move_forward
+step=8 Jev -> move_forward | red_mean=40.0 | enemy_visible=no
+    state_text: x
+PLACE_MATCH id=0 visits=2
+PLACE_TRANSITION 1 -> 0 action=turn_left
+step=16 Jev -> turn_left | red_mean=40.0 | enemy_visible=no
+    state_text: x
+STAGNATION=YES route=0,1,0,1,0
+Episode 0 done: hits=0, final_health=100, steps=24
+"""
+
+
+class TestVisualDiagnostics(unittest.TestCase):
+    def test_counts_place_lines(self):
+        eps = analyze.split_episodes(VISUAL_LOG.splitlines())
+        r = analyze.analyze_episode(eps[0])
+        self.assertEqual(r["V1_place_new"], 2)
+        self.assertEqual(r["V1_place_revisit"], 1)
+        self.assertEqual(r["V2_place_transitions"], 2)
+        self.assertEqual(r["V3_visual_stagnation"], 1)
+
+
+class TestParseEpisodeEnd(unittest.TestCase):
+    """level_clear は fail closed。exit_candidate は根拠にしない"""
+
+    def test_level_clear(self):
+        r = analyze.parse_episode_end(
+            "Episode 0 done: hits=0, exit_candidate=1, died=0, level_clear=1, end_reason=level_clear, timeout_reached=0")
+        self.assertEqual((r["end_reason"], r["level_clear"], r["timeout_reached"]), ("level_clear", 1, 0))
+
+    def test_death_and_timeout(self):
+        for reason in ("death", "timeout", "aborted", "unknown"):
+            r = analyze.parse_episode_end(f"Episode 0 done: level_clear=0, end_reason={reason}")
+            self.assertEqual((r["end_reason"], r["level_clear"]), (reason, 0))
+
+    def test_legacy_log_without_fields_is_unknown(self):
+        # 旧ログ: exit_candidate=1 でも level_clear にしない
+        r = analyze.parse_episode_end("Episode 0 done: hits=0, i_exit=0, exit_candidate=1, died=0")
+        self.assertEqual((r["end_reason"], r["level_clear"], r["timeout_reached"]), ("unknown", 0, None))
+
+    def test_inconsistent_fields_fail_closed(self):
+        for line in ("level_clear=1, end_reason=timeout", "level_clear=0, end_reason=level_clear",
+                     "level_clear=1", "level_clear=1, end_reason=exit_candidate"):
+            r = analyze.parse_episode_end(f"Episode 0 done: {line}")
+            self.assertEqual((r["end_reason"], r["level_clear"]), ("unknown", 0), line)
+
 
 class TestCompare(unittest.TestCase):
     def test_effect_size(self):
