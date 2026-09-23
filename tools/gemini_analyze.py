@@ -27,11 +27,42 @@ PROMPT_TEMPLATE = """あなたはDOOMをプレイするAIエージェントの�
 - 研究の目的は、TypeSafe AI の Jev（クラウドAPI、レイテンシ約250ms）の判断プロセスを可視化し、
   評価基準（criteria）の影響を調べること。Jev の判断が機能していることを重視する
 
-## アーキテクチャ
-- System 1（反射層）: should_force_attack（至近の中央の敵を即 attack、幅閾値 20.0）、WallAvoider（壁前で use→旋回）、
-  ForwardBlockDetector、AreaStagnationDetector、スタック脱出、旋回時の前進（TurnMove）、use 失敗検出、ドア待機の早期解除
-- System 2（Jev）: criteria に従って毎判断で行動を1つ選ぶ。複合アクション（strafe_attack_left/right, advance_attack）あり
-- System 3（Gemini、非同期）: 前方が塞がれた・同じ場所に留まったときだけ戦略指示を出す（有効時間 2秒）
+## アーキテクチャと責務分担（重要）
+
+- **System 2（Jev）**: 戦術判断の中核。criteria に従って毎判断で行動を1つ選ぶ。
+  担当: 戦闘、回避移動、射撃、遮蔽物利用、距離管理、探索方針、アイテム優先度判断。
+  これらはすべて Jev が判断する。System 1 に委譲してはいけない。
+
+- **System 1（ハイブリッド）**: Jev が決定した「計画の実行」のみを担当。
+  担当: WallAvoider、ForwardBlockDetector、AreaStagnationDetector、スタック脱出、
+  旋回時の前進（TurnMove）、use 失敗検出、ドア待機の早期解除。
+  これらは物理的な補正であり、戦術判断はしない。
+
+- **System 3（Gemini、非同期）**: 前方が塞がれた・同じ場所に留まったときだけ戦略指示を出す（有効時間 2秒）。
+
+## 誤った設計パターン（提案してはいけない）
+
+以下は過去に提案されたが、アーキテクチャ違反:
+
+1. **「被弾したら反射で振り向け」**
+   - 誤り: 被弾への反応は戦術判断。System 1 の仕事ではない
+   - 誤り: 「被弾してから反応」という発想自体が間違い。被弾は戦術の失敗の証拠
+   - 正しくは: criteria で「常時 strafe しながら射撃」「遮蔽物を使う」「距離を取る」を指示
+
+2. **「250ms のレイテンシでは間に合わないので System 1 で反射」**
+   - 誤り: 回避は「敵の攻撃が当たる前」に完了している。反応ではなく事前行動
+   - 正しい回避: 敵を見たら即座に strafe、遮蔽物の陰へ、距離を取る。これらは Jev の判断で実行可能
+
+3. **「criteria では解決できないので System 1 で対処」**
+   - 誤り: criteria で解決できないのは criteria の書き方が悪い
+   - 正しい方向: criteria を「常時回避」に書き換える。被弾後の反射ではなく、被弾前の回避行動
+
+## criteria 設計の原則
+
+- 回避行動は「常時実行」: strafe_attack_* は被弾時だけでなく、敵が見えたら即座に選ぶ
+- 「撃つ」と「避ける」は同時: 立ち止まって撃つな
+- 遮蔽物・距離: 敵が近ければ後退しながら撃つ、遠ければ横移動
+- damage_side は診断情報: criteria の改善判断に使う。反射のトリガーには使わない
 
 ## プロジェクト構造
 - criteria 定義: `train/jev_agent.py` の `CRITERIA_SETS`（新しい criteria はここに追加する）
