@@ -506,5 +506,41 @@ class TestExecuteAction(unittest.TestCase):
         self.assertEqual(game.calls, [([1, 0, 0], 3), ([0, 0, 0], 5)])
 
 
+class TestClassifyEpisodeEnd(unittest.TestCase):
+    """ViZDoom の終了フラグ → (end_reason, level_clear)。証明できない終了は unknown へ fail closed"""
+
+    def _c(self, **kw):
+        from train.jev_agent import classify_episode_end
+        args = dict(finished=True, dead=False, timeout_reached=False, exit_reward_seen=True, level_clear_proven=True)
+        args.update(kw)
+        return classify_episode_end(**args)
+
+    def test_level_clear(self):
+        self.assertEqual(self._c(), ("level_clear", 1))
+
+    def test_death_wins(self):
+        self.assertEqual(self._c(dead=True), ("death", 0))
+        self.assertEqual(self._c(dead=True, timeout_reached=True), ("death", 0))
+
+    def test_timeout(self):
+        self.assertEqual(self._c(timeout_reached=True), ("timeout", 0))
+
+    def test_not_finished_is_aborted(self):
+        self.assertEqual(self._c(finished=False), ("aborted", 0))
+
+    def test_unproven_scenario_is_unknown(self):
+        # full_map 以外（シナリオ固有の ACS 終了がありうる）は MAP_END でも clear にしない
+        self.assertEqual(self._c(level_clear_proven=False), ("unknown", 0))
+
+    def test_no_exit_reward_is_unknown(self):
+        self.assertEqual(self._c(exit_reward_seen=False), ("unknown", 0))
+
+    def test_full_map_is_proven(self):
+        from train.scenarios import FULL_MAP_SCENARIOS
+        self.assertTrue(FULL_MAP_SCENARIOS["full_map"]["level_clear_proven"])
+        self.assertEqual(FULL_MAP_SCENARIOS["full_map"]["cfg"], "freedoom2.cfg")
+        self.assertEqual(FULL_MAP_SCENARIOS["full_map"]["map"], "map01")
+
+
 if __name__ == "__main__":
     unittest.main()

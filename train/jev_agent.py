@@ -26,9 +26,13 @@ except ImportError:
 try:
     from train.world_memory import WorldMemory
     from train.elevation import ElevationTracker, DoorWaiter
+    from train.action_timeline import ActionTimeline
+    from train.visual_memory import PlaceStagnationDetector, TopologicalMap, VisualMemory, compute_embedding
 except ImportError:
     from world_memory import WorldMemory
     from elevation import ElevationTracker, DoorWaiter
+    from action_timeline import ActionTimeline
+    from visual_memory import PlaceStagnationDetector, TopologicalMap, VisualMemory, compute_embedding
 
 try:
     from train.state_utils import (
@@ -554,6 +558,8 @@ def resolve_action(state, game_vars, *, use_labels, min_enemy_width, decide, all
         "red_mean": red_mean,
         "enemy_visible": enemy_visible,
         "probs": probs,
+        # timeline 用: 上で検出済みの label_info をそのまま渡す（行動の決定には使わない）
+        "enemy_names": label_info["enemy_names"] if label_info else [],
     }
 
 
@@ -679,11 +685,38 @@ def write_status(lines: list[str], path: str = STATUS_FILE) -> None:
 
 
 # エピソードの時間上限（tic）。full_map の episode_timeout と同じ
+# exit_candidate（legacy/診断用の代理指標）の算出にのみ使う。end_reason・level_clear には使わない
 EPISODE_TIMEOUT_TIC = 14700
 # エピソード終了時に画面を保持する秒数（目視用）。無人運転では環境変数 EPISODE_END_HOLD_SEC=0
 _HOLD = float(os.environ.get("EPISODE_END_HOLD_SEC", "-1"))
-END_HOLD_SEC = ({"death": 10.0, "exit_candidate": 10.0, "timeout": 5.0} if _HOLD < 0
-                else {"death": _HOLD, "exit_candidate": _HOLD, "timeout": _HOLD})
+END_HOLD_SEC = ({"death": 10.0, "level_clear": 10.0, "unknown": 10.0, "timeout": 5.0} if _HOLD < 0
+                else {"death": _HOLD, "level_clear": _HOLD, "unknown": _HOLD, "timeout": _HOLD})
+
+
+def classify_episode_end(*, finished: bool, dead: bool, timeout_reached: bool,
+                         exit_reward_seen: bool, level_clear_proven: bool) -> tuple[str, int]:
+    """エピソード終了を (end_reason, level_clear) に分類する。LEVEL CLEAR の ground truth。
+
+    ViZDoom 1.3.1 の終了条件（src/lib/ViZDoomController.cpp）:
+        is_episode_finished = MAP_END || (single player && PLAYER_DEAD) || timeout
+        MAP_END = gamestate != GS_LEVEL（src/vizdoom/src/viz_game.cpp）
+    よって finished かつ 非dead かつ 非timeout なら MAP_END（マップ終了）しか残らない。
+    MAP_END を level_clear とみなしてよいのは、他の MAP_END 経路がないと監査済みのマップだけ
+    （level_clear_proven。freedoom2 MAP01: ACS なし・EXIT 線は通常 EXIT スイッチ1本、
+    コンソール無効・エージェントは changemap 等を送らない）。それ以外は unknown へ fail closed。
+    exit_reward_seen: エンジンが MAP_END かつ非死亡のときだけ加算する map_exit_reward を受け取ったか（独立の裏付け）。
+
+    exit_candidate・max_distance・visited_cells・kills・生存時間は根拠に使わない。
+    """
+    if not finished:
+        return "aborted", 0  # state 取得失敗でループを抜けた等。ゲームは終了していない
+    if dead:
+        return "death", 0
+    if timeout_reached:
+        return "timeout", 0
+    if not (level_clear_proven and exit_reward_seen):
+        return "unknown", 0
+    return "level_clear", 1
 
 # 付け焼き刃: スタック判定（STUCK_TICS の間に STUCK_MOVE_EPS 単位以上動かなければ脱出）
 STUCK_TICS = 30
@@ -769,6 +802,10 @@ def main():
     api_key = os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
         raise EnvironmentError("TYPESAFE_API_KEY is not set")
+    # run_id（PHASE0監査で未定義と判明）: 1プロセス実行に1つ。run_and_report.sh がログのファイル名から
+    # run 単位を識別しているため厳密には必須ではないが、report.json 単体でも run を追跡できるようにする
+    run_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+    print(f"run_id={run_id}")
     print(f"scenario={args.scenario} criteria={args.criteria} use_labels={args.use_labels}")
 
     # --- シナリオに応じて ACTION_BUTTONS を動的に切り替え ---
@@ -837,6 +874,13 @@ def main():
         # game.send_game_command("snd_musicvolume 0.5")
         # print("[BGM] enabled: built-in OPL, volume=0.5")
 
+    # 診断専用の行動タイムライン（JSONL）。make_action を1回ずつ委譲するだけで行動・tic 数は変えない
+    timeline = ActionTimeline(
+        game, f"experiments/auto_logs/{run_id}_timeline.jsonl", run_id=run_id,
+        read_health=lambda: game.get_game_variable(vzd.GameVariable.HEALTH),
+    )
+    print(f"timeline={timeline.path}")
+
     n_buttons = game.get_available_buttons_size()
     button_names = [str(b).split(".")[-1] for b in game.get_available_buttons()]
     print("Available buttons:", button_names)
@@ -863,6 +907,7 @@ def main():
         game.new_episode()
         print(f"--- Episode {episode} ---")
         tic_counter = 0
+        decision_index = -1  # timeline 用。判断フレームごとに +1
         # P1: 被弾監視（合格条件 = health が100から一度も下がらない）
         hit_count = 0
         prev_health = 100
@@ -878,6 +923,12 @@ def main():
         block_detector = ForwardBlockDetector() if "use" in ACTION_BUTTONS else None
         front_blocked = None
         world_memory = WorldMemory()
+        # Sprint 1（2026-09-23、座標を使わない探索計測）: ログのみ、行動には一切使わない。
+        # 「visited_cells（座標グリッド）が少ないのは、同じ視覚的場所を往復しているからか」を検証するため
+        visual_memory = VisualMemory()
+        topo_map = TopologicalMap()
+        place_stagnation = PlaceStagnationDetector()
+        prev_place_id = None
         elevation = ElevationTracker()
         door_waiter = DoorWaiter(wait_tic=30)
         wall_avoider = WallAvoider() if block_detector is not None else None
@@ -910,6 +961,8 @@ def main():
                 if state is None:
                     break
                 sys1_events = []  # オーバーレイ用: このステップで反射層が動いた記録
+                decision_index += 1
+                rewritten_by = []  # timeline 用: Jev・強制攻撃の後で行動を変えた後処理の名前
                 turn_move = False  # 付け焼き刃: 旋回に前進を同時押しするか
                 cautious = False  # 敵不在の前進を小刻みにするか
                 game_vars = list(state.game_variables)
@@ -949,6 +1002,23 @@ def main():
                 elevation.update(position_z)
                 # ★ 探索セル記録
                 visited_cells.add((int(position[0]) // 128, int(position[1]) // 128))
+
+                # Sprint 1（座標不使用）: 行動には使わない。ログのみ
+                embedding = compute_embedding(state.screen_buffer)
+                if embedding is not None:
+                    place, is_new_place = visual_memory.update(embedding, tic_counter)
+                    topo_map.record_transition(prev_place_id, place.id, choice)
+                    stuck_visual = place_stagnation.update(place.id)
+                    if is_new_place:
+                        print(f"PLACE_NEW id={place.id}")
+                    else:
+                        print(f"PLACE_MATCH id={place.id} visits={place.visit_count}")
+                    if prev_place_id is not None and prev_place_id != place.id:
+                        print(f"PLACE_TRANSITION {prev_place_id} -> {place.id} action={choice}")
+                    if stuck_visual:
+                        print(f"STAGNATION=YES route={','.join(map(str, place_stagnation.recent_route()))}")
+                    prev_place_id = place.id
+
                 # この時点の choice は前回の判断で実行済みの行動
                 if block_detector is not None:
                     front_blocked = block_detector.update(position, choice)
@@ -1004,6 +1074,8 @@ def main():
                         except Exception:
                             damage_dir = "unknown"
                 prev_decision_health = int(health)
+                decision_source = "skip"  # 例外（API 失敗等）のときは前回の choice のまま
+                tic_before_jev = game.get_episode_time()
                 try:
                     choice, source, info = resolve_action(
                         state,
@@ -1024,6 +1096,7 @@ def main():
                         stuck_timeout=None if args.no_stuck_timeout else stuck_detector.active,
                     )
                     prev_system1 = (source == "system1")
+                    decision_source = "forced_attack" if source == "system1" else "jev"
                     if source == "system1":
                         system1_count += 1
                         print(f"step={tic_counter} [System1] FORCED attack "
@@ -1045,6 +1118,9 @@ def main():
                 except Exception as e:
                     print(f"[skip] {e}")
                     jev_line = f"[skip] {str(e)[:60]}"
+                tic_after_jev = game.get_episode_time()
+                jev_called = LAST_JEV_LATENCY_MS[0] is not None
+                decision_action = choice
                 if LAST_JEV_LATENCY_MS[0] is not None:  # 成功・[skip] とも（System 1 のみの判断は除く）
                     jev_latencies.append(LAST_JEV_LATENCY_MS[0])
                     print(f"step={tic_counter} [Jev] latency={LAST_JEV_LATENCY_MS[0]:.0f}ms")
@@ -1065,6 +1141,7 @@ def main():
                 if _escape_left > 0:
                     _escape_left -= 1
                     sys1_events.append(f"Stuck: {choice} -> {_escape_dir}")
+                    rewritten_by.append("Stuck")
                     choice = _escape_dir
 
                 # 反射層（Jev の判断の後）：壁に向かう前進を止める。地点ごとに use 1回、以後は開けた側へ旋回
@@ -1073,6 +1150,7 @@ def main():
                     if steered != choice:
                         print(f"step={tic_counter} [Reflex] {choice} -> {steered} (wall ahead)")
                         sys1_events.append(f"WallAvoider: {choice} -> {steered}")
+                        rewritten_by.append("WallAvoider")
                         choice = steered
 
                 # 修正B: ドア待機の早期解除（開いたら即再開、変化がなければドアではない）
@@ -1090,6 +1168,7 @@ def main():
                     if steered != choice:
                         print(f"step={tic_counter} [UseFail] repeated use at same spot -> {steered}")
                         sys1_events.append(f"UseFail: {choice} -> {steered}")
+                        rewritten_by.append("UseFail")
                         choice = steered
 
                 # 弾消費: 同じ武器のまま弾が減った分を数える（拾った分・持ち替えは除外）
@@ -1113,10 +1192,12 @@ def main():
                         turn_move = True
                         print(f"step={tic_counter} [TurnMove] {choice} + MOVE_FORWARD")
                         sys1_events.append(f"TurnMove: {choice} + MOVE_FORWARD")
+                        rewritten_by.append("TurnMove")
 
                 # 敵が見えないまま前進し続けないよう、敵不在の move_forward は小刻みにする
                 if choice == "move_forward" and not enemy_now:
                     cautious = True
+                    rewritten_by.append("CautiousForward")
 
                 write_status(format_status(
                     jev_line=jev_line, reason=reason, sys1_events=sys1_events,
@@ -1131,16 +1212,36 @@ def main():
                 action_vec[button_names.index("MOVE_FORWARD")] = 1
             target = ACTION_BUTTONS[choice]
 
+            # timeline: この判断の行動ウィンドウの項目（segment ごとの tic・HP は ActionTimeline が記録）
+            door_wait_now = door_waiter.is_waiting()
+            tap = not door_wait_now and target == "USE"
+            timeline.begin(
+                episode=episode, decision_index=decision_index, decision_source=decision_source,
+                tic_before_jev=tic_before_jev if jev_called else None,
+                tic_after_jev=tic_after_jev if jev_called else None,
+                jev_latency_ms=LAST_JEV_LATENCY_MS[0],
+                frame_skip_setting=frame_skip,
+                action_press_tics=0 if door_wait_now else min(
+                    frame_skip, 1 if tap else (CAUTIOUS_FORWARD_TICS if cautious else frame_skip)),
+                action_total_tics=frame_skip, tap=tap,
+                decision_action=decision_action,
+                executed_action="noop" if door_wait_now else choice + ("+move_forward" if turn_move else ""),
+                rewritten_by=rewritten_by + (["DoorWait"] if door_wait_now else []),
+                # skip（info なし）は観測不明なので None（「不可視」として集計しない）
+                enemy_visible=bool(info.get("enemy_visible")) if info else None,
+                enemy_types=list(info.get("enemy_names", [])) if info else None,
+            )
+
             # ドア待機中は前進・旋回を抑制
             if door_waiter.is_waiting():
                 if not door_waiter.tick(frame_skip):
                     print(f"step={tic_counter} [DoorWait] done")
                 # 待機中は行動せず、その場で待つ
-                last_reward = game.make_action([0] * n_buttons, frame_skip)
+                last_reward = timeline.make_action([0] * n_buttons, frame_skip)
             else:
                 # フレームスキップで進める（USE はタップ）
                 last_reward = execute_action(
-                    game, action_vec, frame_skip, tap=(target == "USE"),
+                    timeline, action_vec, frame_skip, tap=(target == "USE"),
                     press_tics=CAUTIOUS_FORWARD_TICS if cautious else None,
                 )
                 # ─── use 実行後にドア待機開始（実行前に start すると同ステップで待機に入り USE が消える）───
@@ -1164,10 +1265,18 @@ def main():
         if is_dead:
             final_health = min(final_health, 0)
         finished = bool(game.is_episode_finished())  # state 取得失敗でループを抜けた場合は候補にしない
+        # legacy/診断用の代理指標。exit_candidate != level_clear（Primary Objective には使わない）
         exit_candidate = 1 if (finished and episode_ended_early and not is_dead) else 0
         i_exit = 0  # 人間の判定で確定する
-        end_reason = ("death" if is_dead else "exit_candidate" if exit_candidate
-                      else "timeout" if not episode_ended_early else "aborted")
+        # LEVEL CLEAR の ground truth は ViZDoom の終了フラグから（classify_episode_end 参照）
+        timeout_reached = bool(game.is_episode_timeout_reached())
+        exit_reward = game.get_map_exit_reward()
+        exit_reward_seen = exit_reward > 0 and game.get_total_reward() >= exit_reward
+        end_reason, level_clear = classify_episode_end(
+            finished=finished, dead=is_dead, timeout_reached=timeout_reached,
+            exit_reward_seen=exit_reward_seen,
+            level_clear_proven=bool(full_map and full_map.get("level_clear_proven")),
+        )
         print(f"[Episode End] Episode {episode} reason={end_reason} tic={tic_counter} health={final_health}")
         # 目視用の保持（無人運転では EPISODE_END_HOLD_SEC=0 で省略。5エピソードで約30秒の短縮）
         hold = END_HOLD_SEC.get(end_reason, 0.0)  # aborted は保持しない
@@ -1181,7 +1290,9 @@ def main():
               f"keys={len(world_memory.keys_obtained)}, "
               f"dead_ends={len(world_memory.dead_ends)}, "
               f"i_exit={i_exit}, exit_candidate={exit_candidate}, died={int(is_dead)}, "
+              f"level_clear={level_clear}, end_reason={end_reason}, timeout_reached={int(timeout_reached)}, "
               f"stuck_timeout={stuck_detector.count}, "
+              f"visual_places={len(visual_memory.nodes)}, visual_transitions={sum(e.count for e in topo_map.edges.values())}, "
               f"kills_total={full_map['monsters_total'] if full_map else 0}, "
               f"ammo_used={ammo_used}, attack_steps={attack_steps}, "
               f"dmg_hits={int(game.get_game_variable(vzd.GameVariable.HITCOUNT))}, "
@@ -1189,10 +1300,12 @@ def main():
               f"ammo_min={int(ammo_min) if ammo_min is not None else -1}, melee_steps={melee_steps}, "
               f"seed={episode_seed if episode_seed is not None else -1}, "
               f"jev_latency_median={statistics.median(jev_latencies) if jev_latencies else -1:.0f}")
+        timeline.flush()
         episode += 1
 
     if sys3 is not None:
         sys3.stop()
+    timeline.close()
     game.close()
     viz.save("jev_visualization.png")
 
