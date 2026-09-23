@@ -218,6 +218,22 @@ CRITERIA_SETS = {
         "strafe_attack_right": "Strafe right AND fire simultaneously. Use ONLY when enemy_centered=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy).",
         "advance_attack": "Advance AND fire simultaneously. Use to close distance on a centered enemy while maintaining pressure.",
     },
+    # 戦闘と移動の分離（2026-09-23）: 敵視認中は move_forward を使わせず、advance_attack に open_center 条件を付け、
+    # 背後からの被弾（damage_side=behind）に旋回で対処する。tactical_peeking は基準線として残す
+    "tactical_peeking_v3": {
+        "move_forward": "If enemy_visible=yes, do NOT use move_forward: use attack, strafe_attack_left, strafe_attack_right or advance_attack instead. move_forward is for navigation only, when no enemy is visible. Only advance when open_center=far or open_center=mid. Do NOT advance if open_center=near; instead turn toward the side that is far. If the Memory summary shows visited cells stopped increasing, turn to find a NEW path. If item_visible=yes and enemy_visible=no, advance toward the item to pick it up.",
+        "use": "Select 'use' whenever front_blocked=yes. In DOOM, some walls are switches that open hidden rooms or monster closets. Try 'use' before turning away. If the first attempt does not open the wall, try up to two times in total, the second from a slightly different position.",
+        # 修正A: "PRIMARY DODGE ACTION" を削除。敵が中央にいないときは逃げずに中央へ寄せる
+        "move_left": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=left, strafe left toward centering. Also use to peek around corners when no enemy is visible.",
+        "move_right": "Reposition to center the enemy on screen. If enemy_visible=yes and enemy_side=right, strafe right toward centering. Also use to peek around corners when no enemy is visible.",
+        "turn_left": "If took_damage=yes AND damage_side=left, turn left to face the attacker. If enemy_visible=yes and enemy_side=left, turn left toward the enemy to center it. If no enemy is visible, turn left when open_left is the most open direction (far) and open_center is not far.",
+        "turn_right": "If took_damage=yes AND damage_side=behind, you are being shot from behind: keep choosing turn_right until the enemy becomes visible (about 6 decisions for a half turn). Do NOT keep moving in the same direction. If took_damage=yes AND damage_side=right, turn right to face the attacker. If enemy_visible=yes and enemy_side=right, turn right toward the enemy to center it. If no enemy is visible, turn right when open_right is the most open direction (far) and open_center is not far.",
+        "attack": "Fire whenever enemy_visible=yes. Do not wait for centering. Do NOT attack if no enemy is visible.",
+        # ★ 複合アクション: 動きながら撃つ（被弾リスクが高い時だけ）
+        "strafe_attack_left": "Strafe left AND fire simultaneously. Use ONLY when enemy_centered=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy).",
+        "strafe_attack_right": "Strafe right AND fire simultaneously. Use ONLY when enemy_centered=yes AND (health (var0) < 70 OR enemy_types includes ChaingunGuy).",
+        "advance_attack": "Advance AND fire simultaneously ONLY when enemy_centered=yes AND open_center=far. Do NOT use it when open_center=mid or near: you would run into a wall. In that case use strafe_attack_left or strafe_attack_right, or plain attack, to keep firing without advancing.",
+    },
     # 修正A を入れる前の tactical_peeking（A/B 切り分け用。B のみの実走で使う）
     "tactical_peeking_v0": {
         "move_forward": "Advance through the area. Check the Memory summary: if visited cells stopped increasing for several steps, you are looping. In that case, STOP advancing forward. Instead turn_left or turn_right to find a NEW path.",
