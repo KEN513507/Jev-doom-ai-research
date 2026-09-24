@@ -30,3 +30,29 @@ ViZDoom + Jev による自動プレイAIの研究リポジトリ。
 
 ## セットアップ
 （後で追記）
+
+## Active development: CLEAR Controller V2
+
+現在の最優先目標は `freedoom2 MAP01 / skill 3` の
+`CLEAR = kills >= 18 AND actual exit`。
+
+現行のlegacy agentは比較・再利用元として保持し、新しい制御系は
+`train/controller_v2/` に隔離して構築する。
+
+設計原則:
+
+- JevをゲームAIそのものではなく teacher / fallback policy として使う
+- 最終 `executed_action` は ActionArbitrator だけが決定する
+- System1 / Memory / Vision / recovery系は proposal / veto / preference を返す
+- Modeは candidate set / fallback / execution profile を所有する
+- Memoryは攻略状態として保持し、将来のExperience Datasetとは分離する
+- ControllerでCLEAR可能になった後にDistillation、必要な部分だけRLを検討する
+
+参照:
+
+- `docs/controller_v2/ARCHITECTURE_CONTRACT.md`
+- `docs/controller_v2/SPRINT_PLAN.md`
+- `train/controller_v2/README.md`
+
+> 旧ドキュメントには初期研究目的の記述が残っている。
+> CLEAR_TRACKの現行設計を進める際は、上記V2文書とSSOTを優先して確認する。
